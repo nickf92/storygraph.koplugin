@@ -53,6 +53,9 @@ local throttle = function(seconds, action)
 
   local cancel = function()
     is_scheduled = false
+    request_trailing = false
+    args = nil
+    previous_execute_at = nil
     return UIManager:unschedule(scheduled_action)
   end
 

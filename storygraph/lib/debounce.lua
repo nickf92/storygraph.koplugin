@@ -32,6 +32,8 @@ local debounce = function(seconds, action)
   end
 
   local cancel = function()
+    args = nil
+    previous_call_at = nil
     return UIManager:unschedule(scheduled_action)
   end
 

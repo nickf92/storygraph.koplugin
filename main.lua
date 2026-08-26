@@ -40,6 +40,7 @@ local debounce = require("storygraph/lib/debounce")
 local Hardcover = require("storygraph/lib/hardcover")
 local HardcoverSettings = require("storygraph/lib/hardcover_settings")
 local PageMapper = require("storygraph/lib/page_mapper")
+local ProgressSync = require("storygraph/lib/progress_sync")
 local Scheduler = require("storygraph/lib/scheduler")
 local throttle = require("storygraph/lib/throttle")
 local User = require("storygraph/lib/user")
@@ -99,8 +100,10 @@ function HardcoverApp:init()
     pos = nil,
     search_results = {},
     book_status = {},
-    page_update_pending = false
+    page_update_pending = false,
+    progress_dirty = false
   }
+  self.progress_sync = ProgressSync:new()
   --logger.warn("HARDCOVER app init")
   self.settings = HardcoverSettings:new(
     ("%s/%s"):format(DataStorage:getSettingsDir(), "storygraphsync_settings.lua"),
@@ -338,7 +341,7 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
           self:startReadCache()
         end
       else
-        self:cancelPendingUpdates()
+        self:cancelPendingUpdates(true)
       end
     end
 
@@ -357,8 +360,6 @@ end
 
 function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
   update_type = update_type or "percentage"
-  --logger.warn("HARDCOVER: Throttled progress update", value, update_type)
-  self.page_update_pending = false
 
   if not self:syncFileUpdates(filename) then
     return
@@ -388,30 +389,88 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
     return
   end
 
-  local immediate_update = function()
-    self.wifi:withWifi(function()
-      local result = Api:updatePage(current_read.id, value, current_read.started_at, update_type)
-      if result then
+  self.progress_sync:put(filename, {
+    value = value,
+    update_type = update_type,
+    read_id = current_read.id,
+    started_at = current_read.started_at,
+    local_page = self.state.latest_page or self.state.page,
+  })
+  self.page_update_pending = true
+
+  self:_flushPageUpdate(filename, immediate, callback)
+end
+
+function HardcoverApp:_flushPageUpdate(filename, immediate, callback)
+  if self.progress_sync:isActive(filename) then
+    return
+  end
+
+  local send_update = function()
+    local update = self.progress_sync:start(filename)
+    if not update then
+      return
+    end
+
+    self.page_update_pending = self.progress_sync:hasPending(filename)
+
+    local accepted = self.wifi:withWifi(function()
+      local result = Api:updatePage(update.read_id, update.value, update.started_at, update.update_type)
+      if result and self.ui.document and self.ui.document.file == filename then
         self.state.book_status = result
+        if self.state.latest_page == update.local_page then
+          self.state.progress_dirty = false
+        end
         self:registerHighlight()
       end
+
+      local trailing_update, has_newer_update = self.progress_sync:finish(filename, result ~= nil)
+      self.page_update_pending = trailing_update ~= nil
+
       if callback then
         callback(result)
       end
-    end)
-  end
 
-  local trapped_update = function()
-    self._pendingPageUpdateJob = nil
-    Trapper:wrap(immediate_update)
+      if trailing_update and has_newer_update then
+        UIManager:nextTick(function()
+          self:_flushPageUpdate(filename, false)
+        end)
+      end
+    end)
+
+    if not accepted then
+      self.progress_sync:finish(filename, false)
+      self.page_update_pending = true
+      if callback then
+        callback(nil)
+      end
+    end
   end
 
   if immediate then
-    immediate_update()
-  else
-    self._pendingPageUpdateJob = trapped_update
-    UIManager:scheduleIn(1, trapped_update)
+    if self._pendingPageUpdateJob then
+      UIManager:unschedule(self._pendingPageUpdateJob)
+      self._pendingPageUpdateJob = nil
+      self._pendingPageUpdateFilename = nil
+    end
+    send_update()
+    return
   end
+
+  if self._pendingPageUpdateJob then
+    return
+  end
+
+  local trapped_update
+  trapped_update = function()
+    self._pendingPageUpdateJob = nil
+    self._pendingPageUpdateFilename = nil
+    Trapper:wrap(send_update)
+  end
+
+  self._pendingPageUpdateJob = trapped_update
+  self._pendingPageUpdateFilename = filename
+  UIManager:scheduleIn(1, trapped_update)
 end
 
 function HardcoverApp:initializePageUpdate()
@@ -451,8 +510,8 @@ function HardcoverApp:pageUpdateEvent(page)
       update_type = "percentage"
     end
 
-    self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
     self.page_update_pending = true
+    self:_throttledHandlePageUpdate(self.ui.document.file, value, false, nil, update_type)
   elseif (self.settings:trackByProgress() or self.settings:trackByPages()) and self.state.last_page then
     local previous_percent, previous_mapped_page = self.page_mapper:getRemotePagePercent(
       self.state.last_page,
@@ -482,7 +541,7 @@ function HardcoverApp:pageUpdateEvent(page)
     if should_sync then
       local percentage = math.floor(current_percent * 100 + 0.5)
       local last_percent = math.floor(previous_percent * 100 + 0.5)
-      local remote_percent = self.state.book_status.percent_finished or 0
+      local remote_percent = tonumber(self.state.book_status.percent_finished) or 0
       if percentage > last_percent and percentage >= remote_percent then
         if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and current_mapped_page then
           self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
@@ -495,7 +554,9 @@ function HardcoverApp:pageUpdateEvent(page)
 end
 
 function HardcoverApp:onPosUpdate(_, page)
+  self.state.latest_page = page
   if self.state.process_page_turns then
+    self.state.progress_dirty = page ~= self.state.page
     self:pageUpdateEvent(page)
   end
 end
@@ -508,6 +569,8 @@ function HardcoverApp:onReaderReady()
   self.page_mapper:cachePageMap()
   self:registerHighlight()
   self.state.page = self.ui:getCurrentPage()
+  self.state.latest_page = self.state.page
+  self.state.progress_dirty = false
  
   if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
     UIManager:scheduleIn(1, self.startReadCache, self)
@@ -580,7 +643,9 @@ function HardcoverApp:checkForUpdates()
   end)
 end
 
-function HardcoverApp:cancelPendingUpdates()
+function HardcoverApp:cancelPendingUpdates(discard_progress)
+  local filename = self.ui.document and self.ui.document.file
+
   if self._cancelPageUpdate then
     self:_cancelPageUpdate()
   end
@@ -592,6 +657,7 @@ function HardcoverApp:cancelPendingUpdates()
   if self._pendingPageUpdateJob then
     UIManager:unschedule(self._pendingPageUpdateJob)
     self._pendingPageUpdateJob = nil
+    self._pendingPageUpdateFilename = nil
   end
 
   if self._endOfBookJob then
@@ -599,21 +665,22 @@ function HardcoverApp:cancelPendingUpdates()
     self._endOfBookJob = nil
   end
 
-  self.page_update_pending = false
+  if discard_progress and filename then
+    self.progress_sync:clear(filename)
+  end
+  self.page_update_pending = filename and self.progress_sync:hasPending(filename) or false
 end
 
 function HardcoverApp:onDocumentClose()
   UIManager:unschedule(self.startReadCache)
 
+  local should_flush = self.state.progress_dirty or self.page_update_pending
   self:cancelPendingUpdates()
   Scheduler:clear()
   self.state.read_cache_started = false
 
-  if not self.state.book_status.id and not self.settings:syncEnabled() then
-    return
-  end
-
-  if self.page_update_pending then
+  if should_flush and self.state.book_status.id and self.settings:syncEnabled()
+      and NetworkManager:isConnected() then
     self:updatePageNow()
   end
 
@@ -624,10 +691,16 @@ function HardcoverApp:onDocumentClose()
 end
 
 function HardcoverApp:onSuspend()
+  local should_flush = self.state.progress_dirty or self.page_update_pending
   self:cancelPendingUpdates()
 
   Scheduler:clear()
   self.state.read_cache_started = false
+
+  if should_flush and self.ui.document and self.state.book_status.id and self.settings:syncEnabled()
+      and NetworkManager:isConnected() then
+    self:updatePageNow()
+  end
 end
 
 function HardcoverApp:onResume()
@@ -638,9 +711,10 @@ end
 
 function HardcoverApp:updatePageNow(callback, value, update_type)
   if not value then
+    local page = self.state.latest_page or self.state.page
     local remote_pages = self.settings:pages()
     local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
-      self.state.page,
+      page,
       self.ui.document:getPageCount(),
       remote_pages
     )
@@ -661,15 +735,16 @@ function HardcoverApp:onNetworkDisconnecting()
     return
   end
 
+  local should_flush = self.state.progress_dirty or self.page_update_pending
   self:cancelPendingUpdates()
 
   Scheduler:clear()
   self.state.read_cache_started = false
 
-  if self.page_update_pending and self.ui.document and self.state.book_status.id and self.settings:syncEnabled() and self.settings:trackByTime() then
+  if should_flush and self.ui.document and self.state.book_status.id and self.settings:syncEnabled()
+      and NetworkManager:isConnected() then
     self:updatePageNow()
   end
-  self.page_update_pending = false
 end
 
 function HardcoverApp:onNetworkConnected()

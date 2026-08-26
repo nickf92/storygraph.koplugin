@@ -17,7 +17,7 @@ end
 function AutoWifi:withWifi(callback)
   if NetworkMgr:isWifiOn() then
     callback(false)
-    return
+    return true
   end
 
   if self.settings:readSetting(SETTING.ENABLE_WIFI)
@@ -42,7 +42,10 @@ function AutoWifi:withWifi(callback)
       -- TODO: schedule turn off wifi, debounce
       self:wifiDisableSilent()
     end)
+    return true
   end
+
+  return false
 end
 
 function AutoWifi:wifiDisableSilent()
