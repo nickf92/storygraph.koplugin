@@ -365,7 +365,8 @@ function HardcoverMenu:getStatusSubMenuItems()
   local status = self.state.book_status.status_id
 
   -- Update progress: only when NOT read, DNF, removed, or want to read
-  if status and status ~= HARDCOVER.STATUS.FINISHED and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ then
+  if not status or (status ~= HARDCOVER.STATUS.FINISHED
+      and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ) then
     table.insert(items, {
       text_func = function()
         local current_page = self.ui:getCurrentPage()

@@ -11,6 +11,8 @@ local socketutil = require("socketutil")
 local htmlparser = require("htmlparser")
 
 local Book = require("storygraph/lib/book")
+local HttpResult = require("storygraph/lib/http_result")
+local ProgressPolicy = require("storygraph/lib/progress_policy")
 local SETTING = require("storygraph/lib/constants/settings")
 local VERSION = require("storygraph_version")
 
@@ -150,6 +152,14 @@ local function urlencode(str)
   return str
 end
 
+local function mutationSucceeded(self, code, headers)
+  local success, reason = HttpResult:mutationSucceeded(code, headers)
+  if not success and reason == "unauthorized" and self.on_error then
+    self.on_error("Unauthorized")
+  end
+  return success
+end
+
 -- Helper to extract authenticity token from HTML
 function HardcoverApi:extract_csrf(html)
   if not html then return self.last_csrf end
@@ -225,7 +235,7 @@ function HardcoverApi:request(url, method, data, custom_headers)
 
     if method == "POST" then
       logger.info("StoryGraph: POST URL: " .. url)
-      logger.info("StoryGraph: POST Body: " .. (body or "nil"))
+      logger.info("StoryGraph: POST body length: " .. (body and #body or 0))
     end
 
     local _, code, _headers, _status = http.request(request)
@@ -628,7 +638,11 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   local status_str = status_map[status_id] or "currently-reading"
   
   local book_url = base_url .. "/books/" .. book_id
-  local _, html, get_resp_headers = self:request(book_url, "GET")
+  local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  if get_code ~= 200 or type(html) ~= "string" then
+    mutationSucceeded(self, get_code, get_resp_headers)
+    return nil
+  end
   
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
@@ -685,17 +699,22 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   end
   
   -- Consider 2xx or 302 (redirect back to book) as potential success
-  if code and (code >= 200 and code < 300 or code == 302) then
+  if mutationSucceeded(self, code, resp_headers) then
     return self:findUserBook(book_id)
   end
   return nil
 end
 
-function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
+function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, options)
   local book_id = user_read_id:gsub("_read", "")
+  options = options or {}
   
   local book_url = base_url .. "/books/" .. book_id
-  local _, html, get_resp_headers = self:request(book_url, "GET")
+  local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  if get_code ~= 200 or type(html) ~= "string" then
+    mutationSucceeded(self, get_code, get_resp_headers)
+    return nil
+  end
   
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
@@ -718,6 +737,27 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
     or html:match('value="([^"]+)"%s+[^>]*name="read_status%[book_num_of_pages%]"')
     or html:match('class="read%-status%-book%-num%-of%-pages"%s+[^>]*value="([^"]+)"')
     or "0"
+
+  if options.skip_behind then
+    local remote_value
+    if update_type == "pages" then
+      remote_value = html:match('name="read_status%[last_reached_pages%]"%s+[^>]*value="([^"]+)"')
+        or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_pages%]"')
+        or html:match('class="read%-status%-last%-reached%-pages"%s+[^>]*value="([^"]+)"')
+    else
+      remote_value = html:match('name="read_status%[last_reached_percent%]"%s+[^>]*value="([^"]+)"')
+        or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_percent%]"')
+        or html:match('class="read%-status%-last%-reached%-percent"%s+[^>]*value="([^"]+)"')
+    end
+    if ProgressPolicy:shouldSkip(value, remote_value, true) then
+      logger.info("StoryGraph: Queued progress is not ahead of remote progress; skipping update")
+      return {
+        _storygraph_skipped = true,
+        last_reached_pages = update_type == "pages" and tonumber(remote_value) or nil,
+        last_reached_percent = update_type ~= "pages" and tonumber(remote_value) or nil,
+      }
+    end
+  end
 
   local update_url = base_url .. "/update-progress"
   update_type = update_type or "percentage"
@@ -743,7 +783,7 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type)
     ["authenticity_token"] = csrf
   }, custom_headers)
   
-  if code and (code >= 200 and code < 300 or code == 302) then
+  if mutationSucceeded(self, code, resp_headers) then
     return self:findUserBook(book_id)
   end
   return nil
@@ -757,7 +797,11 @@ end
 function HardcoverApi:createJournalEntry(data)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
-  local _, html = self:request(book_url, "GET")
+  local get_code, html, get_resp_headers = self:request(book_url, "GET")
+  if get_code ~= 200 or type(html) ~= "string" then
+    mutationSucceeded(self, get_code, get_resp_headers)
+    return nil
+  end
   local csrf = self:extract_csrf(html)
   
   if not csrf then
@@ -799,7 +843,7 @@ function HardcoverApi:createJournalEntry(data)
     ["button"] = ""
   }
 
-  local code, resp = self:request(update_url, "POST", post_data, {
+  local code, resp, resp_headers = self:request(update_url, "POST", post_data, {
     ["X-CSRF-Token"] = csrf,
     ["X-Requested-With"] = "XMLHttpRequest",
     ["Accept"] = "text/vnd.turbo-stream.html, text/html, application/xhtml+xml"
@@ -807,7 +851,7 @@ function HardcoverApi:createJournalEntry(data)
 
   logger.info("StoryGraph: Journal entry response code: " .. (code or "nil"))
   
-  if code and (code >= 200 and code < 300 or code == 302) then
+  if mutationSucceeded(self, code, resp_headers) then
     return self:findUserBook(book_id)
   end
   return nil

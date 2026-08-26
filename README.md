@@ -42,6 +42,7 @@ When enabled, the plugin will periodically sync your progress to StoryGraph:
 - Updates are sent when paging, no more than once per minute (configurable).
 - When reaching the end of the document, the book is automatically marked as "Read" on StoryGraph.
 - Progress can be synced automatically based on time duration, percentage read or pages read (based on edition page count).
+- Progress, status changes, and notes created while offline are saved locally and resumed after reconnection. Only the latest pending progress is kept for each document.
 
 ## Settings
 
@@ -49,6 +50,8 @@ When enabled, the plugin will periodically sync your progress to StoryGraph:
 - **Automatically link by ISBN/Title**: Attempt to find matching books on StoryGraph automatically when opening a new document.
 - **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
 - **Confirm changes**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
+
+Pending offline operations are stored in `storygraphsync_queue.lua` in the KOReader settings directory. The file may temporarily contain note text; each pending entry is removed after StoryGraph confirms its update.
 
 ## Versioning & Mandatory Updates
 

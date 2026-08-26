@@ -11,6 +11,19 @@ end
 function Cache:updateBookStatus(filename, status)
   local settings = self.settings:readBookSettings(filename)
   local book_id = settings.book_id
+  if self.enqueue_operation then
+    local queued, err = self.enqueue_operation({
+      document = filename,
+      book_id = book_id,
+      kind = "status",
+      payload = { status_id = status },
+    })
+    if queued and self.ui.document and self.ui.document.file == filename then
+      self.state.book_status.status_id = status
+    end
+    return queued, err
+  end
+
   local updated_status = Api:updateUserBook(book_id, status)
   if updated_status then
     self.state.book_status = updated_status

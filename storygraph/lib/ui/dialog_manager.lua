@@ -10,6 +10,7 @@ local FileSearcher = require("apps/filemanager/filemanagerfilesearcher")
 
 local Api = require("storygraph/lib/hardcover_api")
 local Book = require("storygraph/lib/book")
+local JournalOperation = require("storygraph/lib/journal_operation")
 local User = require("storygraph/lib/user")
 
 local HARDCOVER = require("storygraph/lib/constants/hardcover")
@@ -169,7 +170,6 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     end
   end
 
-  local wifi_was_off = false
   local dialog
   dialog = JournalDialog:new {
     input = text,
@@ -182,48 +182,45 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
     page_mapper = self.page_mapper,
     save_dialog_callback = function(book_data)
       local api_data = mapJournalData(book_data)
-      local saving_msg = InfoMessage:new{
-        text = _("Saving progress to StoryGraph..."),
-      }
-      UIManager:show(saving_msg)
-      
-      UIManager:scheduleIn(0.1, function()
-        local result = Api:createJournalEntry(api_data)
-        UIManager:close(saving_msg)
-        
-        if result then
-          UIManager:close(dialog)
-          UIManager:setDirty(nil, "full")
-
-          if wifi_was_off then
-            UIManager:nextTick(function()
-              self.wifi:wifiDisablePrompt()
-            end)
-          end
+      local result, err
+      if self.enqueue_operation then
+        api_data.local_page = page
+        local operation = JournalOperation:build(document.file, api_data)
+        if operation then
+          operation.notify_error = false
+          result, err = self.enqueue_operation(operation)
         else
-          self:showError(_("Failed to update StoryGraph"))
-          UIManager:setDirty(nil, "full")
+          err = "invalid_operation"
         end
-      end)
-    end,
-
-    close_callback = function()
-      if wifi_was_off then
-        UIManager:nextTick(function()
-          self.wifi:wifiDisablePrompt()
-        end)
+      else
+        result = Api:createJournalEntry(api_data)
       end
-    end
+
+      if result then
+        UIManager:close(dialog)
+        UIManager:show(InfoMessage:new {
+          text = self.enqueue_operation
+            and (api_data.entry == ""
+              and _("StoryGraph progress saved for synchronization")
+              or _("StoryGraph note saved for synchronization"))
+            or _("StoryGraph note saved"),
+          timeout = 2,
+        })
+        UIManager:setDirty(nil, "full")
+      else
+        local message = err == "queue_full"
+          and _("StoryGraph queue is full; the note was not saved")
+          or _("Failed to save StoryGraph note")
+        self:showError(message)
+        UIManager:setDirty(nil, "full")
+      end
+    end,
   }
   -- scroll to the bottom instead of overscroll displayed
   dialog._input_widget:scrollToBottom()
 
-  self.wifi:wifiPrompt(function(wifi_enabled)
-    wifi_was_off = wifi_enabled
-
-    UIManager:show(dialog)
-    dialog:onShowKeyboard()
-  end)
+  UIManager:show(dialog)
+  dialog:onShowKeyboard()
 end
 
 function DialogManager:showError(err)
