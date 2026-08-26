@@ -4,6 +4,7 @@ local Settings = {
   COMPATIBILITY_MODE = "compatibility_mode",
   ENABLE_WIFI = "enable_wifi",
   LINK_BY_ISBN = "link_by_isbn",
+  LINK_BY_STORYGRAPH = "link_by_storygraph",
   LINK_BY_TITLE = "link_by_title",
   MENU_CONFIRMATION = "menu_confirmation",
   SYNC = "sync",
@@ -29,6 +30,10 @@ local Settings = {
   TRACK_PAGE_STEP = "track_page_step",
 }
 
-Settings.AUTOLINK_OPTIONS = { Settings.LINK_BY_ISBN, Settings.LINK_BY_TITLE }
+Settings.AUTOLINK_OPTIONS = {
+  Settings.LINK_BY_ISBN,
+  Settings.LINK_BY_STORYGRAPH,
+  Settings.LINK_BY_TITLE,
+}
 
 return Settings

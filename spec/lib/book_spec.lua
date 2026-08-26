@@ -38,6 +38,14 @@ HARDCOVER-EDITION:16193290
       assert.are.same(expected, Book:parseIdentifiers(identifiers))
     end)
 
+    it("parses StoryGraph editions", function()
+      local identifiers = "STORYGRAPH-EDITION:16193290"
+      local expected = {
+        book_slug = "16193290"
+      }
+      assert.are.same(expected, Book:parseIdentifiers(identifiers))
+    end)
+
     it("prioritizes hardcover editions over isbn", function()
       local identifiers = [[
 HARDCOVER:1234567890

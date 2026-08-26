@@ -20,7 +20,7 @@ function Scheduler:withRetries(limit, time_exponent, callback, success_callback,
   local tries = 0
 
   local success = function()
-    self.retries[callback] = nil
+    self.retries[scheduled_job] = nil
     if success_callback then
       success_callback()
     end
@@ -32,6 +32,7 @@ function Scheduler:withRetries(limit, time_exponent, callback, success_callback,
     if tries < limit then
       UIManager:scheduleIn(2 ^ (time_exponent + tries), scheduled_job)
     else
+      self.retries[scheduled_job] = nil
       if fail_callback then
         fail_callback()
       end
@@ -44,8 +45,10 @@ function Scheduler:withRetries(limit, time_exponent, callback, success_callback,
 
   local cancel = function()
     UIManager:unschedule(scheduled_job)
+    self.retries[scheduled_job] = nil
   end
 
+  self.retries[scheduled_job] = true
   UIManager:nextTick(scheduled_job)
 
   return cancel

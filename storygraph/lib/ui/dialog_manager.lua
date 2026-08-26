@@ -139,7 +139,7 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
   local settings = self.settings:readBookSettings(document.file) or {}
   local total_pages = document:getPageCount()
 
-  local sync_by_pages = self.settings:syncByRemotePages()
+  local sync_by_pages = self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0
   if not initial_percent then
     if sync_by_pages then
       initial_percent = self.page_mapper:getMappedPage(page, total_pages, remote_pages)

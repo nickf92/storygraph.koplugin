@@ -39,9 +39,8 @@ function Hardcover:showLinkBookDialog(force_search, link_callback)
       book_id = self.settings:getLinkedBookId()
     },
     function(book)
-      self:linkBook(book)
-      if link_callback then
-        link_callback()
+      if self:linkBook(book) and link_callback then
+        link_callback(book)
       end
     end,
     function(search)
@@ -187,7 +186,7 @@ function Hardcover:linkBookByIsbn(identifiers)
   end
 end
 
-function Hardcover:linkBookByHardcover(identifiers)
+function Hardcover:linkBookByStoryGraph(identifiers)
   if identifiers.book_slug then
     local user_id = User:getId()
     local book_lookup = Api:findBookByIdentifiers(
@@ -218,7 +217,7 @@ function Hardcover:tryAutolink()
 
   local identifiers = Book:parseIdentifiers(props.identifiers)
   if ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
-    or ((identifiers.book_slug or identifiers.edition_id) and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER))
+    or ((identifiers.book_slug or identifiers.edition_id) and self.settings:readSetting(SETTING.LINK_BY_STORYGRAPH))
     or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE)) then
     self.wifi:withWifi(function()
       self:_runAutolink(identifiers)
@@ -232,8 +231,8 @@ function Hardcover:_runAutolink(identifiers)
     linked = self:linkBookByIsbn(identifiers)
   end
 
-  if not linked and self.settings:readSetting(SETTING.LINK_BY_HARDCOVER) then
-    linked = self:linkBookByHardcover(identifiers)
+  if not linked and self.settings:readSetting(SETTING.LINK_BY_STORYGRAPH) then
+    linked = self:linkBookByStoryGraph(identifiers)
   end
 
   if not linked and self.settings:readSetting(SETTING.LINK_BY_TITLE) then

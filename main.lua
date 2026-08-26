@@ -348,7 +348,7 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
   elseif field == SETTING.TRACK_METHOD then
     self:cancelPendingUpdates()
     self:initializePageUpdate()
-  elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_TITLE then
+  elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_STORYGRAPH or field == SETTING.LINK_BY_TITLE then
     if change then
       self.hardcover:tryAutolink()
     end
@@ -402,12 +402,14 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
   end
 
   local trapped_update = function()
+    self._pendingPageUpdateJob = nil
     Trapper:wrap(immediate_update)
   end
 
   if immediate then
     immediate_update()
   else
+    self._pendingPageUpdateJob = trapped_update
     UIManager:scheduleIn(1, trapped_update)
   end
 end
@@ -441,7 +443,7 @@ function HardcoverApp:pageUpdateEvent(page)
       self.settings:pages()
     )
     local value, update_type
-    if self.settings:syncByRemotePages() and mapped_page then
+    if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and mapped_page then
       value = mapped_page
       update_type = "pages"
     else
@@ -482,7 +484,7 @@ function HardcoverApp:pageUpdateEvent(page)
       local last_percent = math.floor(previous_percent * 100 + 0.5)
       local remote_percent = self.state.book_status.percent_finished or 0
       if percentage > last_percent and percentage >= remote_percent then
-        if self.settings:syncByRemotePages() and current_mapped_page then
+        if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and current_mapped_page then
           self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
         else
           self:_handlePageUpdate(self.ui.document.file, percentage)
@@ -587,13 +589,24 @@ function HardcoverApp:cancelPendingUpdates()
     self:_cancelPageUpdateEvent()
   end
 
+  if self._pendingPageUpdateJob then
+    UIManager:unschedule(self._pendingPageUpdateJob)
+    self._pendingPageUpdateJob = nil
+  end
+
+  if self._endOfBookJob then
+    UIManager:unschedule(self._endOfBookJob)
+    self._endOfBookJob = nil
+  end
+
   self.page_update_pending = false
 end
 
 function HardcoverApp:onDocumentClose()
-  UIManager:unschedule(self.startCacheRead)
+  UIManager:unschedule(self.startReadCache)
 
   self:cancelPendingUpdates()
+  Scheduler:clear()
   self.state.read_cache_started = false
 
   if not self.state.book_status.id and not self.settings:syncEnabled() then
@@ -625,12 +638,13 @@ end
 
 function HardcoverApp:updatePageNow(callback, value, update_type)
   if not value then
+    local remote_pages = self.settings:pages()
     local decimal_percent, mapped_page = self.page_mapper:getRemotePagePercent(
       self.state.page,
       self.ui.document:getPageCount(),
-      self.settings:pages()
+      remote_pages
     )
-    if self.settings:syncByRemotePages() and mapped_page then
+    if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and mapped_page then
       value = mapped_page
       update_type = "pages"
     else
@@ -691,16 +705,14 @@ function HardcoverApp:onEndOfBook()
     return
   end
 
-  local user_id = User:getId()
-
   local marker = function()
-    local book_id = self.settings:readBookSetting(file_path, "book_id")
-    local user_book = Api:findUserBook(book_id, user_id) or {}
-    self.cache:updateBookStatus(file_path, HARDCOVER.STATUS.FINISHED)
+    return self.cache:updateBookStatus(file_path, HARDCOVER.STATUS.FINISHED)
   end
 
   if mark_read == 'later' then
-    UIManager:scheduleIn(30, function()
+    local delayed_marker
+    delayed_marker = function()
+      self._endOfBookJob = nil
       local status = "reading"
       if DocSettings:hasSidecarFile(file_path) then
         local summary = DocSettings:open(file_path):readSetting("summary")
@@ -713,14 +725,17 @@ function HardcoverApp:onEndOfBook()
           marker()
         end)
       end
-    end)
+    end
+    self._endOfBookJob = delayed_marker
+    UIManager:scheduleIn(30, delayed_marker)
   else
     self.wifi:withWifi(function()
-      marker()
-      UIManager:show(InfoMessage:new {
-        text = _("StoryGraph status saved"),
-        timeout = 2
-      })
+      if marker() then
+        UIManager:show(InfoMessage:new {
+          text = _("StoryGraph status saved"),
+          timeout = 2
+        })
+      end
     end)
   end
 end
@@ -742,15 +757,13 @@ function HardcoverApp:onDocSettingsItemsChanged(file, doc_settings)
   end
 
   if status then
-    local book_id = self.settings:readBookSetting(file, "book_id")
-    local user_book = Api:findUserBook(book_id, User:getId()) or {}
     self.wifi:withWifi(function()
-      self.cache:updateBookStatus(file, status)
-
-      UIManager:show(InfoMessage:new {
-        text = _("StoryGraph status saved"),
-        timeout = 2
-      })
+      if self.cache:updateBookStatus(file, status) then
+        UIManager:show(InfoMessage:new {
+          text = _("StoryGraph status saved"),
+          timeout = 2
+        })
+      end
     end)
   end
 end

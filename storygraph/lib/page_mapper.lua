@@ -3,12 +3,20 @@ local _t = require("storygraph/lib/table_util")
 local PageMapper = {}
 PageMapper.__index = PageMapper
 
+local function validRemotePages(remote_pages)
+  remote_pages = tonumber(remote_pages)
+  if remote_pages and remote_pages > 0 then
+    return remote_pages
+  end
+end
+
 function PageMapper:new(o)
   return setmetatable(o or {}, self)
 end
 
 function PageMapper:getUnmappedPage(remote_page, document_pages, remote_pages)
   self:checkIgnorePagemap()
+  remote_pages = validRemotePages(remote_pages)
 
   local target_page = remote_page
   if self.state.page_map and remote_pages and self.state.page_map_range and self.state.page_map_range.real_page then
@@ -18,15 +26,16 @@ function PageMapper:getUnmappedPage(remote_page, document_pages, remote_pages)
 
   local document_page = self.state.page_map and _t.binSearch(self.state.page_map, target_page)
 
-  if not document_page then
+  if not document_page and remote_pages then
     document_page = math.floor((remote_page / remote_pages) * document_pages + 0.5)
   end
 
-  return document_page
+  return document_page or remote_page
 end
 
 function PageMapper:getMappedPage(raw_page, document_pages, remote_pages)
   self:checkIgnorePagemap()
+  remote_pages = validRemotePages(remote_pages)
 
   if self.state.page_map then
     local mapped_page = self.state.page_map[raw_page]
@@ -110,6 +119,7 @@ end
 -- Used to decide whether a reading threshold has been crossed
 function PageMapper:getRemotePagePercent(raw_page, document_pages, remote_pages)
   self:checkIgnorePagemap()
+  remote_pages = validRemotePages(remote_pages)
 
   local local_percent = nil
   local mapped_page = nil

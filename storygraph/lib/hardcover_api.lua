@@ -886,12 +886,26 @@ end
 function HardcoverApi:updateRating(user_book_id, rating) return nil end
 function HardcoverApi:findBookByIdentifiers(identifiers, user_id)
   local isbn = identifiers and (identifiers.isbn_13 or identifiers.isbn_10)
-  if not isbn then return nil end
-  
-  local results, err = self:findBooks(isbn, nil, user_id)
-  if results and #results > 0 then
-    return results[1]
+  if isbn then
+    local results = self:findBooks(isbn, nil, user_id)
+    if results and #results > 0 then
+      return results[1]
+    end
   end
+
+  local storygraph_id = identifiers and identifiers.book_slug
+  if storygraph_id then
+    local status = self:findUserBook(storygraph_id, user_id)
+    if status and status.book_id then
+      return {
+        book_id = status.book_id,
+        title = status.title or storygraph_id,
+        pages = status.book_num_of_pages,
+        edition_format = status.edition_format,
+      }
+    end
+  end
+
   return nil
 end
 function HardcoverApi:findDefaultEdition(book_id, user_id) return { id = book_id, edition_format = "StoryGraph", pages = 100 } end

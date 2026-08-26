@@ -371,7 +371,7 @@ function HardcoverMenu:getStatusSubMenuItems()
         local current_page = self.ui:getCurrentPage()
         local total_pages = self.ui.document:getPageCount()
         local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() then
+        if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 then
           local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
           return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
         else
@@ -980,6 +980,16 @@ function HardcoverMenu:getSettingsSubMenuItems()
       callback = function()
         local setting = self.settings:readSetting(SETTING.LINK_BY_ISBN) == true
         self.settings:updateSetting(SETTING.LINK_BY_ISBN, not setting)
+      end
+    },
+    {
+      text = "Automatically link by StoryGraph identifier",
+      checked_func = function()
+        return self.settings:readSetting(SETTING.LINK_BY_STORYGRAPH) == true
+      end,
+      callback = function()
+        local setting = self.settings:readSetting(SETTING.LINK_BY_STORYGRAPH) == true
+        self.settings:updateSetting(SETTING.LINK_BY_STORYGRAPH, not setting)
       end
     },
     {

@@ -277,6 +277,18 @@ describe("PageMapper", function()
       assert.are.equal(0.5, percent)
       assert.are.equal(10, page)
     end)
+
+    it("treats a zero remote page count as unavailable", function()
+      local page_map = PageMapper:new {
+        state = {},
+        ui = ui({}, false)
+      }
+
+      local percent, page = page_map:getRemotePagePercent(10, 20, 0)
+
+      assert.are.equal(0.5, percent)
+      assert.are.equal(10, page)
+    end)
     describe("when there is a page map", function()
       local map = {
         {
