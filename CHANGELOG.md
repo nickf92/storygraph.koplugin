@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.5 (2026-08-27)
+
+### Features
+
+* Use Wi-Fi on demand for automatic background synchronization with a battery-aware cooldown.
+* Share the automatic Wi-Fi cooldown across queue sync, read-cache loading, autolinking, and version checks.
+
+### Fixes
+
+* Respect the configured version-check interval across KOReader restarts and avoid duplicate scheduled checks.
+* Keep queued operations intact when automatic connectivity is unavailable, without periodic network retries.
+
+### Documentation
+
+* Clarify the repository lineage, upstream attribution, and AI-assisted development disclosure.
+
 ## 0.2.4 (2026-08-26)
 
 ### Features
