@@ -267,6 +267,31 @@ describe("BackgroundSync", function()
     assert.are.equal(1, read_cache_calls)
   end)
 
+  it("shares a failed background-sync cooldown with version check", function()
+    local sync, state = build()
+
+    assert.is_true(sync:request())
+    state.now = state.now + 300
+    local accepted, reason = sync:withAutomaticWifi("version_check", function() end)
+
+    assert.is_false(accepted)
+    assert.are.equal("cooldown", reason)
+    assert.are.equal(1, state.wifi_calls)
+  end)
+
+  it("shares a failed version-check cooldown with read cache and background sync", function()
+    local sync, state = build()
+
+    assert.is_true(sync:withAutomaticWifi("version_check", function(_, connected)
+      assert.is_false(connected)
+    end))
+    state.now = state.now + 300
+
+    assert.is_false(sync:withAutomaticWifi("read_cache", function() end))
+    assert.is_false(sync:request())
+    assert.are.equal(1, state.wifi_calls)
+  end)
+
   it("does not apply the automatic cooldown to direct manual wifi actions", function()
     local sync, state = build()
     local manual_calls = 0

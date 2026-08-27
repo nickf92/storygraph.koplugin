@@ -48,6 +48,7 @@ local SyncQueue = require("storygraph/lib/sync_queue")
 local SyncSender = require("storygraph/lib/sync_sender")
 local throttle = require("storygraph/lib/throttle")
 local User = require("storygraph/lib/user")
+local VersionCheck = require("storygraph/lib/version_check")
 
 local DialogManager = require("storygraph/lib/ui/dialog_manager")
 local HardcoverMenu = require("storygraph/lib/ui/hardcover_menu")
@@ -232,6 +233,54 @@ function HardcoverApp:init()
       elseif status == "wifi_not_started" then
         logger.info(("StoryGraph: automatic wifi could not start; consumer=%s, reason=%s, pending=%d")
           :format(consumer, details.reason, pending))
+      end
+    end,
+  }
+  self.version_check = VersionCheck:new {
+    automatic_wifi = self.background_sync,
+    manual_wifi = self.wifi,
+    is_connected = function()
+      return NetworkManager:isConnected()
+    end,
+    fetch = function()
+      local Github = require("storygraph/lib/github")
+      return Github:fetchVersionInfo()
+    end,
+    read_last_check = function()
+      return self.settings:readSetting(SETTING.LAST_VERSION_CHECK)
+    end,
+    read_interval_days = function()
+      return self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
+    end,
+    write_last_check = function(timestamp)
+      self.settings:updateSetting(SETTING.LAST_VERSION_CHECK, timestamp)
+    end,
+    schedule_in = function(delay, job)
+      UIManager:scheduleIn(delay, job)
+    end,
+    unschedule = function(job)
+      UIManager:unschedule(job)
+    end,
+    can_check = function()
+      return self.enabled or self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) == true
+    end,
+    on_success = function(info)
+      return self:_handleVersionInfo(info)
+    end,
+    on_status = function(status, details)
+      if status == "not_due" then
+        logger.dbg(("StoryGraph: version check not due; next_check_in=%ds")
+          :format(math.ceil(details.remaining_seconds)))
+      elseif status == "due" then
+        logger.dbg("StoryGraph: version check due")
+      elseif status == "offline" then
+        logger.info("StoryGraph: version check offline; last successful check unchanged")
+      elseif status == "fetch_failed" then
+        logger.info("StoryGraph: version check fetch failed; last successful check unchanged")
+      elseif status == "succeeded" then
+        logger.info("StoryGraph: version check succeeded")
+      elseif status == "skipped" then
+        logger.dbg(("StoryGraph: version check skipped; reason=%s"):format(details.reason or "unknown"))
       end
     end,
   }
@@ -584,6 +633,8 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
   elseif field == SETTING.SESSION_COOKIE or field == SETTING.REMEMBER_TOKEN then
     self._syncQueueRetryBlocked = false
     self:_requestSyncQueueFlush()
+  elseif field == SETTING.VERSION_CHECK_INTERVAL then
+    self.version_check:schedule(1, true)
   end
 end
 
@@ -749,72 +800,44 @@ function HardcoverApp:onReaderReady()
   if self.ui.document and (self.settings:bookLinked() or self.settings:autolinkEnabled()) then
     UIManager:scheduleIn(1, self.startReadCache, self)
   end
-  UIManager:scheduleIn(1, self.initiateVersionCheck, self)
+  self.version_check:schedule(1)
 end
 
 function HardcoverApp:initiateVersionCheck()
-  if self.state.version_checked then return end
-
-  local last_check = self.settings:readSetting(SETTING.LAST_VERSION_CHECK) or 0
-  local interval = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
-  local now = os.time()
-  
-  -- Always check on first startup of the session, otherwise respect interval
-  if not self.state.session_checked or (now - last_check >= (interval * 24 * 3600)) then
-    self.state.session_checked = true
-    self:checkForUpdates()
-  else
-    -- Schedule it for when it's next due
-    local next_check_in = math.max(1, (interval * 24 * 3600) - (now - last_check))
-    UIManager:scheduleIn(next_check_in, self.checkForUpdates, self)
-  end
+  return self.version_check:initiate()
 end
 
-function HardcoverApp:checkForUpdates()
-  -- If we're already out of date and NOT ignoring, no need to keep checking
-  if not self.enabled and not self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
-    return
+function HardcoverApp:checkForUpdates(manual)
+  return self.version_check:check(manual == true)
+end
+
+function HardcoverApp:_handleVersionInfo(info)
+  local plugin_path = self.path or (DataStorage:getPluginDir() .. "/storygraph.koplugin")
+  local Meta = dofile(plugin_path .. "/_meta.lua")
+
+  if info.api_version and Meta.api_version < info.api_version then
+    self.enabled = false
+    self.menu.enabled = false
+
+    if self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
+      UIManager:show(Notification:new {
+        text = _("StoryGraph: Mandatory update available (Ignored)"),
+        timeout = 5
+      })
+    else
+      self:cancelPendingUpdates()
+
+      if self.settings:readSetting(SETTING.SHOW_VERSION_DIALOG) ~= false then
+        UIManager:show(Notification:new {
+          text = info.message or _("StoryGraph: Mandatory update required!"),
+          timeout = 10
+        })
+      end
+    end
+    return false
   end
 
-  self.wifi:withWifi(function()
-    local Github = require("storygraph/lib/github")
-    local info = Github:fetchVersionInfo()
-    if not info then return end
-
-    self.state.version_checked = true
-    self.settings:updateSetting(SETTING.LAST_VERSION_CHECK, os.time())
-
-    -- Check for mandatory update
-    local plugin_path = self.path or (DataStorage:getPluginDir() .. "/storygraph.koplugin")
-    local Meta = dofile(plugin_path .. "/_meta.lua")
-
-    if info.api_version and Meta.api_version < info.api_version then
-      -- Always mark as disabled internally if version is outdated
-      self.enabled = false
-      self.menu.enabled = false
-
-      if self.settings:readSetting(SETTING.IGNORE_VERSION_BLOCK) then
-        UIManager:show(Notification:new {
-          text = _("StoryGraph: Mandatory update available (Ignored)"),
-          timeout = 5
-        })
-      else
-        self:cancelPendingUpdates()
-        
-        if self.settings:readSetting(SETTING.SHOW_VERSION_DIALOG) ~= false then
-          UIManager:show(Notification:new {
-            text = info.message or _("StoryGraph: Mandatory update required!"),
-            timeout = 10
-          })
-        end
-        return
-      end
-    else
-      -- Up to date, schedule the next check
-      local interval = self.settings:readSetting(SETTING.VERSION_CHECK_INTERVAL) or 1
-      UIManager:scheduleIn(interval * 24 * 3600, self.checkForUpdates, self)
-    end
-  end)
+  return true
 end
 
 function HardcoverApp:cancelPendingUpdates(discard_progress)
