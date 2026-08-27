@@ -36,6 +36,7 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _t = require("storygraph/lib/table_util")
 local Api = require("storygraph/lib/hardcover_api")
 local AutoWifi = require("storygraph/lib/auto_wifi")
+local BackgroundSync = require("storygraph/lib/background_sync")
 local Cache = require("storygraph/lib/cache")
 local debounce = require("storygraph/lib/debounce")
 local Hardcover = require("storygraph/lib/hardcover")
@@ -168,6 +169,66 @@ function HardcoverApp:init()
   }
   self.wifi = AutoWifi:new {
     settings = self.settings
+  }
+  self.background_sync = BackgroundSync:new {
+    wifi = self.wifi,
+    is_connected = function()
+      return not self._networkDisconnecting and NetworkManager:isConnected()
+    end,
+    wifi_enabled = function()
+      return self.settings:readSetting(SETTING.ENABLE_WIFI) == true
+    end,
+    cooldown_seconds = function()
+      return math.max(math.min(self.settings:trackFrequency(), 120), 1) * 60
+    end,
+    can_attempt = function()
+      if self._syncQueueFlushJob then return false, "flush_scheduled" end
+      if self.sync_dispatcher.busy then return false, "dispatcher_busy" end
+      if self._syncQueueRetryBlocked then return false, "retry_blocked" end
+      if self._networkDisconnecting then return false, "network_disconnecting" end
+      return true
+    end,
+    request_flush = function()
+      return self:_requestSyncQueueFlush()
+    end,
+    drain_now = function()
+      if self._syncQueueFlushJob then
+        UIManager:unschedule(self._syncQueueFlushJob)
+        self._syncQueueFlushJob = nil
+      end
+      local queued_before = self.sync_queue:count()
+      local success, status = self:_drainSyncQueueNow()
+      logger.info(("StoryGraph: background queue drain finished; status=%s, pending_before=%d, pending_after=%d")
+        :format(tostring(status), queued_before, self.sync_queue:count()))
+      return success, status
+    end,
+    on_status = function(status, details)
+      local pending = self.sync_queue:count()
+      if status == "trying_wifi" then
+        logger.info(("StoryGraph: offline background flush; trying wifi on demand, pending=%d, cooldown=%ds")
+          :format(pending, details.cooldown_seconds))
+      elseif status == "wifi_connected" then
+        logger.info(("StoryGraph: wifi on demand connected; flushing queue, pending=%d"):format(pending))
+      elseif status == "wifi_unavailable" then
+        logger.info(("StoryGraph: wifi on demand unavailable; keeping queue pending, pending=%d, next_attempt_in=%ds")
+          :format(pending, details.cooldown_seconds))
+      elseif status == "already_in_progress" then
+        logger.dbg("StoryGraph: background queue flush already in progress")
+      elseif status == "connected_during_wifi_attempt" then
+        logger.dbg("StoryGraph: NetworkConnected handled by background wifi attempt")
+      elseif status == "cooldown" then
+        logger.dbg(("StoryGraph: background wifi cooldown active; remaining=%ds, pending=%d")
+          :format(math.ceil(details.remaining_seconds), pending))
+      elseif status == "blocked" then
+        logger.dbg(("StoryGraph: background wifi attempt skipped; reason=%s, pending=%d")
+          :format(details.reason, pending))
+      elseif status == "wifi_disabled" then
+        logger.dbg(("StoryGraph: background wifi attempt skipped; reason=disabled, pending=%d"):format(pending))
+      elseif status == "wifi_not_started" then
+        logger.info(("StoryGraph: background wifi could not start; reason=%s, pending=%d")
+          :format(details.reason, pending))
+      end
+    end,
   }
   self.dialog_manager = DialogManager:new {
     page_mapper = self.page_mapper,
@@ -363,7 +424,8 @@ function HardcoverApp:_notifySyncQueueError(err)
   })
 end
 
-function HardcoverApp:_enqueueSyncOperation(operation, callback)
+function HardcoverApp:_enqueueSyncOperation(operation, callback, options)
+  options = options or {}
   local notify_error = operation.notify_error ~= false
   operation.notify_error = nil
   operation.session_id = operation.session_id or self._documentSessionId
@@ -393,7 +455,11 @@ function HardcoverApp:_enqueueSyncOperation(operation, callback)
   self.page_update_pending = self.ui.document
     and self.sync_queue:hasPending(self.ui.document.file, "progress")
     or false
-  self:_requestSyncQueueFlush()
+  if options.background_sync then
+    self.background_sync:request()
+  else
+    self:_requestSyncQueueFlush()
+  end
   return queued
 end
 
@@ -565,7 +631,9 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
       local_page = self.state.latest_page or self.state.page,
       allow_regression = immediate == true,
     },
-  }, callback)
+  }, callback, {
+    background_sync = immediate ~= true,
+  })
 end
 
 function HardcoverApp:initializePageUpdate()
@@ -865,7 +933,14 @@ end
 function HardcoverApp:onNetworkConnected()
   self._networkDisconnecting = false
   self._syncQueueRetryBlocked = false
-  self:_requestSyncQueueFlush()
+  local pending = self.sync_queue:count()
+  if pending > 0 and not self.background_sync:isWifiAttemptPending() then
+    logger.info(("StoryGraph: network connected; requesting normal queue flush, pending=%d"):format(pending))
+  end
+  local _, flush_status = self.background_sync:onNetworkConnected()
+  if flush_status == "background_wifi_attempt" then
+    return
+  end
   if self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started then
     --logger.warn("HARDCOVER on connected", self.state.read_cache_started)
 

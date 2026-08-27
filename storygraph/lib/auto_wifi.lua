@@ -17,35 +17,40 @@ end
 function AutoWifi:withWifi(callback)
   if NetworkMgr:isWifiOn() then
     callback(false)
-    return true
+    return true, "wifi_already_on"
   end
 
-  if self.settings:readSetting(SETTING.ENABLE_WIFI)
-      and not NetworkMgr.pending_connection
-      and Device:hasWifiRestore()
-      and G_reader_settings:nilOrFalse("airplanemode") then
+  if not self.settings:readSetting(SETTING.ENABLE_WIFI) then
+    return false, "disabled"
+  end
+  if NetworkMgr.pending_connection then
+    return false, "connection_pending"
+  end
+  if not Device:hasWifiRestore() then
+    return false, "restore_unavailable"
+  end
+  if not G_reader_settings:nilOrFalse("airplanemode") then
+    return false, "airplane_mode"
+  end
+
     --logger.warn("HARDCOVER enabling wifi")
 
-    local original_on = NetworkMgr.wifi_was_on
+  local original_on = NetworkMgr.wifi_was_on
 
-    NetworkMgr:restoreWifiAsync()
-    NetworkMgr:scheduleConnectivityCheck(function()
-      -- restore original "was on" state to prevent wifi being restored automatically after suspend
-      NetworkMgr.wifi_was_on = original_on
-      G_reader_settings:saveSetting("wifi_was_on", original_on)
+  NetworkMgr:restoreWifiAsync()
+  NetworkMgr:scheduleConnectivityCheck(function()
+    -- restore original "was on" state to prevent wifi being restored automatically after suspend
+    NetworkMgr.wifi_was_on = original_on
+    G_reader_settings:saveSetting("wifi_was_on", original_on)
 
-      self.connection_pending = false
-      --logger.warn("HARDCOVER wifi enabled")
+    self.connection_pending = false
+    --logger.warn("HARDCOVER wifi enabled")
 
-      callback(true)
+    callback(true)
 
-      -- TODO: schedule turn off wifi, debounce
-      self:wifiDisableSilent()
-    end)
-    return true
-  end
-
-  return false
+    self:wifiDisableSilent()
+  end)
+  return true, "started"
 end
 
 function AutoWifi:wifiDisableSilent()
@@ -53,7 +58,7 @@ function AutoWifi:wifiDisableSilent()
     -- explicitly disable wifi was on
     NetworkMgr.wifi_was_on = false
     G_reader_settings:saveSetting("wifi_was_on", false)
-    --logger.warn("HARDCOVER disabling wifi")
+    logger.info("StoryGraph: temporary wifi returned to off state")
   end)
 end
 
