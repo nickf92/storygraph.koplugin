@@ -21,8 +21,10 @@ function BackgroundSync:new(options)
     now = options.now or os.time,
     on_status = options.on_status,
     last_auto_wifi_attempt_at = nil,
-    last_reported_skip = nil,
+    reported_skips = {},
     wifi_attempt_pending = false,
+    wifi_attempt_consumer = nil,
+    wifi_attempt_waiters = {},
   }, self)
 end
 
@@ -33,11 +35,15 @@ function BackgroundSync:_report(status, details)
 end
 
 function BackgroundSync:_reportSkip(status, details)
-  local key = status .. ":" .. tostring(details and details.reason or "")
-  if self.last_reported_skip == key then
+  local key = table.concat({
+    status,
+    tostring(details and details.consumer or ""),
+    tostring(details and details.reason or ""),
+  }, ":")
+  if self.reported_skips[key] then
     return
   end
-  self.last_reported_skip = key
+  self.reported_skips[key] = true
   self:_report(status, details)
 end
 
@@ -48,33 +54,42 @@ end
 function BackgroundSync:onNetworkConnected()
   if self.wifi_attempt_pending then
     self:_report("connected_during_wifi_attempt")
-    return false, "background_wifi_attempt"
+    return false, "automatic_wifi_attempt"
   end
-  self.last_reported_skip = nil
+  self.reported_skips = {}
   return self.request_flush(), "connected"
 end
 
-function BackgroundSync:request()
+function BackgroundSync:withAutomaticWifi(consumer, callback)
+  consumer = consumer or "automatic"
+  assert(type(callback) == "function", "callback is required")
+
   if self.wifi_attempt_pending then
-    self:_reportSkip("already_in_progress")
-    return false, "already_in_progress"
+    if self.wifi_attempt_consumer == consumer then
+      self:_reportSkip("already_in_progress", { consumer = consumer })
+      return true, "already_in_progress"
+    end
+    for _, waiter in ipairs(self.wifi_attempt_waiters) do
+      if waiter.consumer == consumer then
+        return true, "already_joined"
+      end
+    end
+    self.wifi_attempt_waiters[#self.wifi_attempt_waiters + 1] = {
+      consumer = consumer,
+      callback = callback,
+    }
+    self:_reportSkip("joined_in_progress", { consumer = consumer })
+    return true, "joined_in_progress"
   end
 
   if self.is_connected() then
-    self.last_reported_skip = nil
-    return self.request_flush(), "connected"
-  end
-
-  if self.can_attempt then
-    local can_attempt, block_reason = self.can_attempt()
-    if not can_attempt then
-      self:_reportSkip("blocked", { reason = block_reason or "unknown" })
-      return false, "blocked"
-    end
+    self.reported_skips = {}
+    callback(false, true)
+    return true, "connected"
   end
 
   if not self.wifi_enabled() then
-    self:_reportSkip("wifi_disabled")
+    self:_reportSkip("wifi_disabled", { consumer = consumer })
     return false, "wifi_disabled"
   end
 
@@ -83,6 +98,7 @@ function BackgroundSync:request()
   if self.last_auto_wifi_attempt_at
       and now - self.last_auto_wifi_attempt_at < cooldown then
     self:_reportSkip("cooldown", {
+      consumer = consumer,
       cooldown_seconds = cooldown,
       remaining_seconds = cooldown - (now - self.last_auto_wifi_attempt_at),
     })
@@ -92,35 +108,79 @@ function BackgroundSync:request()
   local previous_attempt_at = self.last_auto_wifi_attempt_at
   self.last_auto_wifi_attempt_at = now
   self.wifi_attempt_pending = true
+  self.wifi_attempt_consumer = consumer
 
   local attempt_reported = false
   local reportAttempt = function()
     if attempt_reported then return end
     attempt_reported = true
-    self.last_reported_skip = nil
-    self:_report("trying_wifi", { cooldown_seconds = cooldown })
+    self.reported_skips = {}
+    self:_report("trying_wifi", { consumer = consumer, cooldown_seconds = cooldown })
   end
 
-  local accepted, not_started_reason = self.wifi:withWifi(function()
+  local accepted, not_started_reason = self.wifi:withWifi(function(wifi_started)
     reportAttempt()
-    if self.is_connected() then
-      self:_report("wifi_connected")
-      self.drain_now()
-    else
-      self:_report("wifi_unavailable", { cooldown_seconds = cooldown })
-    end
+    local connected = self.is_connected()
+    local waiters = self.wifi_attempt_waiters
+    self.wifi_attempt_waiters = {}
     self.wifi_attempt_pending = false
+    self.wifi_attempt_consumer = nil
+
+    local notify = function(target_consumer, target_callback)
+      if connected then
+        self:_report("wifi_connected", { consumer = target_consumer })
+      else
+        self:_report("wifi_unavailable", {
+          consumer = target_consumer,
+          cooldown_seconds = cooldown,
+        })
+      end
+      target_callback(wifi_started == true, connected)
+    end
+
+    notify(consumer, callback)
+    for _, waiter in ipairs(waiters) do
+      notify(waiter.consumer, waiter.callback)
+    end
   end)
 
   if not accepted then
     self.last_auto_wifi_attempt_at = previous_attempt_at
     self.wifi_attempt_pending = false
-    self:_reportSkip("wifi_not_started", { reason = not_started_reason or "unavailable" })
+    self.wifi_attempt_consumer = nil
+    self.wifi_attempt_waiters = {}
+    self:_reportSkip("wifi_not_started", {
+      consumer = consumer,
+      reason = not_started_reason or "unavailable",
+    })
     return false, "wifi_not_started"
   end
 
   reportAttempt()
   return true, "wifi_attempt"
+end
+
+function BackgroundSync:request()
+  if not self.is_connected() and self.can_attempt then
+    local can_attempt, block_reason = self.can_attempt()
+    if not can_attempt then
+      self:_reportSkip("blocked", {
+        consumer = "background_sync",
+        reason = block_reason or "unknown",
+      })
+      return false, "blocked"
+    end
+  end
+
+  return self:withAutomaticWifi("background_sync", function(wifi_started, connected)
+    if connected then
+      if wifi_started then
+        self.drain_now()
+      else
+        self.request_flush()
+      end
+    end
+  end)
 end
 
 return BackgroundSync

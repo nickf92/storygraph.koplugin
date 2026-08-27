@@ -837,7 +837,7 @@ function HardcoverMenu:getUpdateSubMenuItems()
             text = _("StoryGraph: Version block ignored. Sync enabled."),
             timeout = 5
           })
-          self.app:startReadCache()
+          self.app:startReadCache(true)
         else
           UIManager:show(Notification:new {
             text = _("StoryGraph: Version block active. Sync disabled."),

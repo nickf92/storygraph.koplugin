@@ -204,29 +204,34 @@ function HardcoverApp:init()
     end,
     on_status = function(status, details)
       local pending = self.sync_queue:count()
+      local consumer = details.consumer or "background_sync"
       if status == "trying_wifi" then
-        logger.info(("StoryGraph: offline background flush; trying wifi on demand, pending=%d, cooldown=%ds")
-          :format(pending, details.cooldown_seconds))
+        logger.info(("StoryGraph: automatic wifi attempt started; consumer=%s, pending=%d, cooldown=%ds")
+          :format(consumer, pending, details.cooldown_seconds))
       elseif status == "wifi_connected" then
-        logger.info(("StoryGraph: wifi on demand connected; flushing queue, pending=%d"):format(pending))
+        logger.info(("StoryGraph: automatic wifi connected; consumer=%s, pending=%d")
+          :format(consumer, pending))
       elseif status == "wifi_unavailable" then
-        logger.info(("StoryGraph: wifi on demand unavailable; keeping queue pending, pending=%d, next_attempt_in=%ds")
-          :format(pending, details.cooldown_seconds))
+        logger.info(("StoryGraph: automatic wifi unavailable; consumer=%s, pending=%d, next_attempt_in=%ds")
+          :format(consumer, pending, details.cooldown_seconds))
       elseif status == "already_in_progress" then
-        logger.dbg("StoryGraph: background queue flush already in progress")
+        logger.dbg(("StoryGraph: automatic wifi attempt already covers consumer=%s"):format(consumer))
+      elseif status == "joined_in_progress" then
+        logger.dbg(("StoryGraph: automatic wifi consumer joined active attempt; consumer=%s"):format(consumer))
       elseif status == "connected_during_wifi_attempt" then
-        logger.dbg("StoryGraph: NetworkConnected handled by background wifi attempt")
+        logger.dbg("StoryGraph: NetworkConnected handled by shared automatic wifi attempt")
       elseif status == "cooldown" then
-        logger.dbg(("StoryGraph: background wifi cooldown active; remaining=%ds, pending=%d")
-          :format(math.ceil(details.remaining_seconds), pending))
+        logger.dbg(("StoryGraph: automatic wifi cooldown active; consumer=%s, remaining=%ds, pending=%d")
+          :format(consumer, math.ceil(details.remaining_seconds), pending))
       elseif status == "blocked" then
-        logger.dbg(("StoryGraph: background wifi attempt skipped; reason=%s, pending=%d")
-          :format(details.reason, pending))
+        logger.dbg(("StoryGraph: automatic wifi attempt skipped; consumer=%s, reason=%s, pending=%d")
+          :format(consumer, details.reason, pending))
       elseif status == "wifi_disabled" then
-        logger.dbg(("StoryGraph: background wifi attempt skipped; reason=disabled, pending=%d"):format(pending))
+        logger.dbg(("StoryGraph: automatic wifi attempt skipped; consumer=%s, reason=disabled, pending=%d")
+          :format(consumer, pending))
       elseif status == "wifi_not_started" then
-        logger.info(("StoryGraph: background wifi could not start; reason=%s, pending=%d")
-          :format(details.reason, pending))
+        logger.info(("StoryGraph: automatic wifi could not start; consumer=%s, reason=%s, pending=%d")
+          :format(consumer, details.reason, pending))
       end
     end,
   }
@@ -241,6 +246,7 @@ function HardcoverApp:init()
     end,
   }
   self.hardcover = Hardcover:new {
+    automatic_wifi = self.background_sync,
     cache = self.cache,
     dialog_manager = self.dialog_manager,
     settings = self.settings,
@@ -557,7 +563,7 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
       if book_settings.sync then
         self.state.process_page_turns = true
         if not self.state.book_status.id then
-          self:startReadCache()
+          self:startReadCache(true)
         end
       else
         self.state.process_page_turns = false
@@ -573,7 +579,7 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
     self:initializePageUpdate()
   elseif field == SETTING.LINK_BY_ISBN or field == SETTING.LINK_BY_STORYGRAPH or field == SETTING.LINK_BY_TITLE then
     if change then
-      self.hardcover:tryAutolink()
+      self.hardcover:tryAutolink(true)
     end
   elseif field == SETTING.SESSION_COOKIE or field == SETTING.REMEMBER_TOKEN then
     self._syncQueueRetryBlocked = false
@@ -938,7 +944,10 @@ function HardcoverApp:onNetworkConnected()
     logger.info(("StoryGraph: network connected; requesting normal queue flush, pending=%d"):format(pending))
   end
   local _, flush_status = self.background_sync:onNetworkConnected()
-  if flush_status == "background_wifi_attempt" then
+  if flush_status == "automatic_wifi_attempt" then
+    if self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started then
+      self:startReadCache()
+    end
     return
   end
   if self.ui.document and self.settings:syncEnabled() and not self.state.read_cache_started then
@@ -1030,7 +1039,7 @@ function HardcoverApp:onDocSettingsItemsChanged(file, doc_settings)
   end
 end
 
-function HardcoverApp:startReadCache()
+function HardcoverApp:startReadCache(manual_network)
   logger.info("StoryGraph: startReadCache triggered")
   if not self:isActive() then
     logger.info("StoryGraph: startReadCache aborted - app not active")
@@ -1051,12 +1060,10 @@ function HardcoverApp:startReadCache()
 
   local cancel
 
-  local restart = function(delay)
-    --logger.warn("HARDCOVER restart cache fetch")
-    delay = delay or 60
+  local restartAfterLink = function(delay)
     cancel()
     self.state.read_cache_started = false
-    UIManager:scheduleIn(delay, self.startReadCache, self)
+    UIManager:scheduleIn(delay, self.startReadCache, self, manual_network)
   end
 
   cancel = Scheduler:withRetries(6, 3, function(success, fail)
@@ -1071,9 +1078,16 @@ function HardcoverApp:startReadCache()
           if self.state.book_status.id then
             return success()
           else
-            local accepted = self.wifi:withWifi(function()
+            local with_wifi = manual_network
+              and function(callback) return self.wifi:withWifi(callback) end
+              or function(callback)
+                return self.background_sync:withAutomaticWifi("read_cache", callback)
+              end
+            local accepted = with_wifi(function()
               if not NetworkManager:isConnected() then
-                return restart()
+                logger.info("StoryGraph: no network available; read cache remains pending")
+                self.state.read_cache_started = false
+                return success()
               end
 
               if self._syncQueueFlushJob then
@@ -1103,7 +1117,7 @@ function HardcoverApp:startReadCache()
         else
           self.hardcover:tryAutolink()
           if self.settings:bookLinked() and self.settings:syncEnabled() then
-            return restart(2)
+            return restartAfterLink(2)
           end
         end
       end)

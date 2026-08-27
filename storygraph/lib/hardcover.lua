@@ -208,7 +208,7 @@ function Hardcover:linkBookByTitle()
   end
 end
 
-function Hardcover:tryAutolink()
+function Hardcover:tryAutolink(manual_network)
   if self.settings:bookLinked() then
     return
   end
@@ -219,8 +219,16 @@ function Hardcover:tryAutolink()
   if ((identifiers.isbn_10 or identifiers.isbn_13) and self.settings:readSetting(SETTING.LINK_BY_ISBN))
     or ((identifiers.book_slug or identifiers.edition_id) and self.settings:readSetting(SETTING.LINK_BY_STORYGRAPH))
     or (props.title and self.settings:readSetting(SETTING.LINK_BY_TITLE)) then
-    self.wifi:withWifi(function()
-      self:_runAutolink(identifiers)
+    if manual_network or not self.automatic_wifi then
+      return self.wifi:withWifi(function()
+        self:_runAutolink(identifiers)
+      end)
+    end
+
+    return self.automatic_wifi:withAutomaticWifi("autolink", function(_, connected)
+      if connected then
+        self:_runAutolink(identifiers)
+      end
     end)
   end
 end

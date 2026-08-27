@@ -11,6 +11,7 @@ describe("BackgroundSync", function()
       flush_requests = 0,
       drains = 0,
       statuses = {},
+      wifi_started = options.wifi_started ~= false,
     }
     local wifi_callback
     local wifi = {
@@ -22,7 +23,7 @@ describe("BackgroundSync", function()
           if options.connects then
             state.connected = true
           end
-          callback()
+          callback(state.wifi_started)
         end
         return options.wifi_accepted ~= false, options.wifi_reason
       end,
@@ -56,7 +57,7 @@ describe("BackgroundSync", function()
       end,
     }
     return sync, state, function()
-      wifi_callback()
+      wifi_callback(state.wifi_started)
     end
   end
 
@@ -141,7 +142,7 @@ describe("BackgroundSync", function()
     assert.is_true(sync:request())
     assert.is_true(sync:isWifiAttemptPending())
     local accepted, reason = sync:request()
-    assert.is_false(accepted)
+    assert.is_true(accepted)
     assert.are.equal("already_in_progress", reason)
     assert.are.equal(1, state.wifi_calls)
 
@@ -158,7 +159,7 @@ describe("BackgroundSync", function()
     local accepted, reason = sync:onNetworkConnected()
 
     assert.is_false(accepted)
-    assert.are.equal("background_wifi_attempt", reason)
+    assert.are.equal("automatic_wifi_attempt", reason)
     assert.are.equal(0, state.flush_requests)
 
     finish_wifi()
@@ -182,5 +183,101 @@ describe("BackgroundSync", function()
 
     sync:request()
     assert.are.equal(1, #state.statuses)
+  end)
+
+  it("uses an existing connection without consuming the automatic wifi cooldown", function()
+    local sync, state = build { connected = true }
+    local callback_calls = 0
+
+    assert.is_true(sync:withAutomaticWifi("read_cache", function(_, connected)
+      assert.is_true(connected)
+      callback_calls = callback_calls + 1
+    end))
+
+    assert.are.equal(1, callback_calls)
+    assert.are.equal(0, state.wifi_calls)
+    assert.is_nil(sync.last_auto_wifi_attempt_at)
+  end)
+
+  it("lets read cache use wifi when the shared cooldown is available", function()
+    local sync, state = build { connects = true }
+    local read_cache_calls = 0
+
+    assert.is_true(sync:withAutomaticWifi("read_cache", function(wifi_started, connected)
+      assert.is_true(wifi_started)
+      assert.is_true(connected)
+      read_cache_calls = read_cache_calls + 1
+    end))
+
+    assert.are.equal(1, read_cache_calls)
+    assert.are.equal(1, state.wifi_calls)
+    assert.are.equal(1000, sync.last_auto_wifi_attempt_at)
+  end)
+
+  it("shares a failed background-sync cooldown with read cache", function()
+    local sync, state = build()
+    local read_cache_calls = 0
+
+    assert.is_true(sync:request())
+    state.now = state.now + 300
+    local accepted, reason = sync:withAutomaticWifi("read_cache", function()
+      read_cache_calls = read_cache_calls + 1
+    end)
+
+    assert.is_false(accepted)
+    assert.are.equal("cooldown", reason)
+    assert.are.equal(0, read_cache_calls)
+    assert.are.equal(1, state.wifi_calls)
+  end)
+
+  it("shares a failed read-cache cooldown with background sync", function()
+    local sync, state = build()
+    local read_cache_calls = 0
+
+    assert.is_true(sync:withAutomaticWifi("read_cache", function(_, connected)
+      assert.is_false(connected)
+      read_cache_calls = read_cache_calls + 1
+    end))
+    state.now = state.now + 300
+    local accepted, reason = sync:request()
+
+    assert.is_false(accepted)
+    assert.are.equal("cooldown", reason)
+    assert.are.equal(1, read_cache_calls)
+    assert.are.equal(1, state.wifi_calls)
+    assert.are.equal(0, state.drains)
+  end)
+
+  it("lets read cache join an active background wifi attempt", function()
+    local sync, state, finish_wifi = build { defer_wifi = true }
+    local read_cache_calls = 0
+
+    assert.is_true(sync:request())
+    local accepted, reason = sync:withAutomaticWifi("read_cache", function(_, connected)
+      assert.is_true(connected)
+      read_cache_calls = read_cache_calls + 1
+    end)
+    assert.is_true(accepted)
+    assert.are.equal("joined_in_progress", reason)
+
+    state.connected = true
+    finish_wifi()
+    assert.are.equal(1, state.wifi_calls)
+    assert.are.equal(1, state.drains)
+    assert.are.equal(1, read_cache_calls)
+  end)
+
+  it("does not apply the automatic cooldown to direct manual wifi actions", function()
+    local sync, state = build()
+    local manual_calls = 0
+
+    assert.is_true(sync:request())
+    state.now = state.now + 300
+    sync.wifi:withWifi(function()
+      manual_calls = manual_calls + 1
+    end)
+
+    assert.are.equal(1, manual_calls)
+    assert.are.equal(2, state.wifi_calls)
   end)
 end)
