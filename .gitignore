@@ -4,4 +4,5 @@ storygraph_config.lua
 /lua
 /lua_modules
 /.luarocks
+/issues/
 .DS_STORE

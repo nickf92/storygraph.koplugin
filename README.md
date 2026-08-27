@@ -3,10 +3,18 @@
 A KOReader plugin to synchronize your reading progress, notes, and status to [The StoryGraph](https://thestorygraph.com).
 
 > [!NOTE]
-> This plugin is a fork of the [Hardcover.app for KOReader](https://github.com/Billiam/hardcoverapp.koplugin) by [Billiam](https://github.com/Billiam). It has been redesigned to support StoryGraph.
+> This repository is forked from [burneracc0112/storygraph.koplugin](https://github.com/burneracc0112/storygraph.koplugin) and builds on the work that adapted the original KOReader plugin to StoryGraph.
+>
+> The StoryGraph plugin was itself derived from [Billiam/hardcoverapp.koplugin](https://github.com/Billiam/hardcoverapp.koplugin). Credit and thanks go to both upstream maintainers for the work this fork is based on.
 
 > [!CAUTION]
 > **Disclaimer**: This plugin uses an unofficial API based on session cookies. Because of this, it is inherently brittle and may break if StoryGraph updates their website or cookie structure. If sync stops working, please ensure you are using the latest version of the plugin and try re-fetching your session tokens.
+
+## AI-assisted development
+
+Development of this fork is AI-assisted. AI tools may be used for code analysis, implementation, refactoring, tests, documentation, and assisted code review.
+
+Bugs may still occur. Contributions and bug reports are welcome.
 
 ## Installation
 

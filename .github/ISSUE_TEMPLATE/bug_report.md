@@ -7,7 +7,7 @@ assignees: ''
 
 ---
 
-* hardcoverapp.koplugin version:
+* storygraph.koplugin version:
 * KOReader version:
 * Device:
 

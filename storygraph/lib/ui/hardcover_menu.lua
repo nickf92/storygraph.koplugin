@@ -185,7 +185,13 @@ v]] .. version .. new_release_str .. [[
 Updates book progress and status on thestorygraph.com
 
 Project:
-github.com/billiam/hardcoverapp.koplugin (forked for StoryGraph)
+github.com/nickf92/storygraph.koplugin
+
+Forked from:
+github.com/burneracc0112/storygraph.koplugin
+
+Originally based on:
+github.com/Billiam/hardcoverapp.koplugin
 
 Settings:
 ]] .. settings_file,
