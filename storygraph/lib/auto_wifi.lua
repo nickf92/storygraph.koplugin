@@ -4,6 +4,9 @@ local Device = require("device")
 local logger = require("logger")
 
 local NetworkMgr = require("ui/network/manager")
+local UIManager = require("ui/uimanager")
+
+local CONNECTIVITY_TIMEOUT_SECONDS = 46
 
 local AutoWifi = {
   connection_pending = false
@@ -14,7 +17,7 @@ function AutoWifi:new(o)
   return setmetatable(o, self)
 end
 
-function AutoWifi:withWifi(callback)
+function AutoWifi:withWifi(callback, failure_callback)
   if NetworkMgr:isWifiOn() then
     callback(false)
     return true, "wifi_already_on"
@@ -36,20 +39,50 @@ function AutoWifi:withWifi(callback)
     --logger.warn("HARDCOVER enabling wifi")
 
   local original_on = NetworkMgr.wifi_was_on
+  local completed = false
+  local timeout_job
 
-  NetworkMgr:restoreWifiAsync()
-  NetworkMgr:scheduleConnectivityCheck(function()
+  local complete = function(connected)
+    if completed then
+      return
+    end
+    completed = true
+    self.connection_pending = false
+
+    if timeout_job then
+      UIManager:unschedule(timeout_job)
+      timeout_job = nil
+    end
+
     -- restore original "was on" state to prevent wifi being restored automatically after suspend
     NetworkMgr.wifi_was_on = original_on
     G_reader_settings:saveSetting("wifi_was_on", original_on)
 
-    self.connection_pending = false
+    if connected then
+      callback(true)
+      self:wifiDisableSilent()
+    elseif failure_callback then
+      failure_callback("connectivity_timeout")
+    end
+  end
+
+  self.connection_pending = true
+  NetworkMgr:restoreWifiAsync()
+  NetworkMgr:scheduleConnectivityCheck(function()
     --logger.warn("HARDCOVER wifi enabled")
-
-    callback(true)
-
-    self:wifiDisableSilent()
+    complete(true)
   end)
+
+  timeout_job = function()
+    timeout_job = nil
+    if NetworkMgr:isConnected() then
+      complete(true)
+      return
+    end
+    logger.warn("StoryGraph: automatic Wi-Fi connectivity check timed out")
+    complete(false)
+  end
+  UIManager:scheduleIn(CONNECTIVITY_TIMEOUT_SECONDS, timeout_job)
   return true, "started"
 end
 

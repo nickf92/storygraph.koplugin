@@ -14,11 +14,13 @@ describe("BackgroundSync", function()
       wifi_started = options.wifi_started ~= false,
     }
     local wifi_callback
+    local wifi_failure_callback
     local wifi = {
-      withWifi = function(_, callback)
+      withWifi = function(_, callback, failure_callback)
         state.wifi_calls = state.wifi_calls + 1
         if options.defer_wifi then
           wifi_callback = callback
+          wifi_failure_callback = failure_callback
         else
           if options.connects then
             state.connected = true
@@ -58,6 +60,8 @@ describe("BackgroundSync", function()
     }
     return sync, state, function()
       wifi_callback(state.wifi_started)
+    end, function(reason)
+      wifi_failure_callback(reason or "connectivity_timeout")
     end
   end
 
@@ -164,6 +168,22 @@ describe("BackgroundSync", function()
 
     finish_wifi()
     assert.are.equal(1, state.drains)
+  end)
+
+  it("recovers after an automatic wifi attempt times out", function()
+    local sync, state, _, fail_wifi = build { defer_wifi = true }
+
+    assert.is_true(sync:request())
+    assert.is_true(sync:isWifiAttemptPending())
+
+    fail_wifi()
+    assert.is_false(sync:isWifiAttemptPending())
+    assert.are.equal("wifi_unavailable", state.statuses[#state.statuses].status)
+    assert.are.equal("connectivity_timeout", state.statuses[#state.statuses].details.reason)
+
+    state.connected = true
+    assert.is_true(sync:onNetworkConnected())
+    assert.are.equal(1, state.flush_requests)
   end)
 
   it("does not start a cooldown when wifi cannot be started", function()

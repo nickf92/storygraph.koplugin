@@ -118,7 +118,10 @@ function BackgroundSync:withAutomaticWifi(consumer, callback)
     self:_report("trying_wifi", { consumer = consumer, cooldown_seconds = cooldown })
   end
 
-  local accepted, not_started_reason = self.wifi:withWifi(function(wifi_started)
+  local attempt_finished = false
+  local finishAttempt = function(wifi_started, failure_reason)
+    if attempt_finished then return end
+    attempt_finished = true
     reportAttempt()
     local connected = self.is_connected()
     local waiters = self.wifi_attempt_waiters
@@ -133,6 +136,7 @@ function BackgroundSync:withAutomaticWifi(consumer, callback)
         self:_report("wifi_unavailable", {
           consumer = target_consumer,
           cooldown_seconds = cooldown,
+          reason = failure_reason,
         })
       end
       target_callback(wifi_started == true, connected)
@@ -142,6 +146,12 @@ function BackgroundSync:withAutomaticWifi(consumer, callback)
     for _, waiter in ipairs(waiters) do
       notify(waiter.consumer, waiter.callback)
     end
+  end
+
+  local accepted, not_started_reason = self.wifi:withWifi(function(wifi_started)
+    finishAttempt(wifi_started)
+  end, function(reason)
+    finishAttempt(true, reason or "unavailable")
   end)
 
   if not accepted then
