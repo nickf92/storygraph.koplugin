@@ -19,7 +19,7 @@ describe("AutoWifi", function()
     for _, module_name in ipairs(module_names) do
       original_modules[module_name] = package.loaded[module_name]
     end
-    original_reader_settings = G_reader_settings
+    original_reader_settings = _G.G_reader_settings
 
     package.loaded["device"] = {
       hasWifiRestore = function() return true end,
@@ -52,7 +52,7 @@ describe("AutoWifi", function()
     }
     package.loaded["storygraph/lib/auto_wifi"] = nil
 
-    G_reader_settings = {
+    _G.G_reader_settings = {
       nilOrFalse = function() return true end,
       saveSetting = function() end,
     }
@@ -64,7 +64,7 @@ describe("AutoWifi", function()
     for _, module_name in ipairs(module_names) do
       package.loaded[module_name] = original_modules[module_name]
     end
-    G_reader_settings = original_reader_settings
+    _G.G_reader_settings = original_reader_settings
     connectivity_callback = nil
     timeout_job = nil
     unscheduled_job = nil
