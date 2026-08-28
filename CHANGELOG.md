@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.6 (2026-08-28)
+
+### Fixes
+
+* Recover automatic synchronization after KOReader's Wi-Fi connectivity check times out, allowing later connections to drain the offline queue.
+* Finalize timed-out Wi-Fi attempts exactly once and notify every waiting background consumer without duplicating successful flushes.
+
+### Tests
+
+* Add regression coverage for failed connectivity attempts, late callbacks, and queue recovery after reconnection.
+
 ## 0.2.5 (2026-08-27)
 
 ### Features
