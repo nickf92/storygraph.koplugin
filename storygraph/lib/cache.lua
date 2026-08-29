@@ -31,8 +31,11 @@ function Cache:updateBookStatus(filename, status)
   return updated_status
 end
 
-function Cache:cacheUserBook()
-  local filename = self.ui.document.file
+function Cache:cacheUserBook(filename)
+  if type(filename) ~= "string" or filename == "" then
+    return { completed = true, cancelled = true }
+  end
+
   local status, errors = Api:findUserBook(self.settings:getLinkedBookId(), User:getId())
   self.state.book_status = status or {}
 

@@ -1095,20 +1095,36 @@ function HardcoverApp:startReadCache(manual_network)
           -- fail, but cancel retries
           return success()
         end
-        local book_settings = self.settings:readBookSettings(self.ui.document.file) or {}
+        local document = self.ui.document
+        local filename = document.file
+        local document_session_id = self._documentSessionId
+        local book_settings = self.settings:readBookSettings(filename) or {}
         --logger.warn("HARDCOVER", book_settings)
         if book_settings.book_id then
           if self.state.book_status.id then
             return success()
           else
             local with_wifi = manual_network
-              and function(callback) return self.wifi:withWifi(callback) end
+              and function(callback)
+                return self.wifi:withWifi(function(wifi_started)
+                  callback(wifi_started, NetworkManager:isConnected())
+                end)
+              end
               or function(callback)
                 return self.background_sync:withAutomaticWifi("read_cache", callback)
               end
-            local accepted = with_wifi(function()
-              if not NetworkManager:isConnected() then
+            local accepted = with_wifi(function(_, connected)
+              if connected ~= true or not NetworkManager:isConnected() then
                 logger.info("StoryGraph: no network available; read cache remains pending")
+                self.state.read_cache_started = false
+                return success()
+              end
+
+              local current_document = self.ui.document
+              if current_document ~= document
+                  or current_document.file ~= filename
+                  or self._documentSessionId ~= document_session_id then
+                logger.info("StoryGraph: read cache cancelled - document context changed")
                 self.state.read_cache_started = false
                 return success()
               end
@@ -1122,7 +1138,7 @@ function HardcoverApp:startReadCache(manual_network)
                 return success()
               end
 
-              local err = self.cache:cacheUserBook()
+              local err = self.cache:cacheUserBook(filename)
               self:registerHighlight()
               logger.info("StoryGraph: startReadCache - cacheUserBook completed, status=" .. (self.state.book_status.status_id or "nil"))
               if err and err.completed == false then
@@ -1147,7 +1163,7 @@ function HardcoverApp:startReadCache(manual_network)
     end,
 
     function()
-      if self.settings:syncEnabled() then
+      if self.ui.document and self:isActive() and self.settings:syncEnabled() then
         --logger.warn("HARDCOVER enabling page turns")
 
         self.state.process_page_turns = true

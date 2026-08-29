@@ -142,7 +142,10 @@ function HardcoverMenu:getSubMenuItems(book_view)
         return self:isActive() and self.settings:bookLinked()
       end,
       sub_item_table_func = function()
-        self.cache:cacheUserBook()
+        local document = self.ui.document
+        if document then
+          self.cache:cacheUserBook(document.file)
+        end
 
         return self:getStatusSubMenuItems()
       end,
@@ -663,7 +666,10 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
       callback = function(menu_instance)
         local success = Api:saveReview(book_id, review, self.state.book_status.review_url)
         if success then
-          self.cache:cacheUserBook()
+          local document = self.ui.document
+          if document then
+            self.cache:cacheUserBook(document.file)
+          end
           UIManager:show(InfoMessage:new { text = "Review saved!" })
           self.state.review = nil -- Clear temp state
           menu_instance:onClose()
