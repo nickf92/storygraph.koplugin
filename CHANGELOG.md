@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.7 (2026-08-29)
+
+### Fixes
+
+* Prevent a completed background Wi-Fi callback from refreshing a book after its document or reader session has closed or changed.
+* Use the connection result belonging to the active Wi-Fi attempt instead of accepting an unrelated later network connection.
+* Decouple book-cache refreshes from the live reader document so stale callbacks fail safely instead of crashing KOReader.
+
+### Tests
+
+* Add regression coverage for cache refreshes after document teardown and for explicit captured filenames.
+
 ## 0.2.6 (2026-08-28)
 
 ### Fixes
