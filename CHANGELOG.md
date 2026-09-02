@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.8 (2026-09-02)
+
+### Fixes
+
+* Keep progress queued until StoryGraph confirms that the linked edition is currently reading and that the requested progress was applied.
+* Explain when progress is waiting for a “Currently Reading” transition instead of reporting a false successful synchronization.
+* Send an explicitly confirmed “Currently Reading” status before retained progress so synchronization can recover without losing queue order.
+
+### Security
+
+* Stop writing CSRF tokens to the KOReader crash log during edition switches.
+
+### Tests
+
+* Add regression coverage for to-read editions, unconfirmed remote progress, explicit regressions, persisted queue priority, and recovery after a reading-status transition.
+
 ## 0.2.7 (2026-08-29)
 
 ### Fixes
