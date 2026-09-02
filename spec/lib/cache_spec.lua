@@ -75,4 +75,26 @@ describe("Cache", function()
     assert.are.equal("/books/current.epub", updated_filename)
     assert.are.same({ pages = 321 }, updated_values)
   end)
+
+  it("prioritizes an explicit currently-reading transition before progress", function()
+    local received
+    local cache = Cache:new {
+      state = { book_status = { status_id = 1 } },
+      ui = { document = { file = "/books/current.epub" } },
+      settings = {
+        readBookSettings = function()
+          return { book_id = "edition-id" }
+        end,
+      },
+      enqueue_operation = function(operation)
+        received = operation
+        return operation
+      end,
+    }
+
+    cache:updateBookStatus("/books/current.epub", 2)
+
+    assert.are.equal("before_progress", received.priority)
+    assert.are.equal(2, cache.state.book_status.status_id)
+  end)
 end)

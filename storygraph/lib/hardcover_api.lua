@@ -1107,7 +1107,7 @@ function HardcoverApi:switchEdition(from_book_id, to_book_id)
     end
   end
 
-  logger.warn("StoryGraph switchEdition IDs: from=", true_from_id, " to=", to_book_id, " csrf=", csrf)
+  logger.info("StoryGraph switchEdition IDs: from=", true_from_id, " to=", to_book_id)
 
   local switch_url = base_url .. "/switch-editions"
   local data = {

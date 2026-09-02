@@ -7,7 +7,11 @@ describe("SyncSender", function()
       api = {
         updatePage = function(_, ...)
           received = { ... }
-          return { id = "book-1" }
+          return {
+            id = "book-1",
+            status_id = 2,
+            last_reached_percent = 42,
+          }
         end,
       },
     }
@@ -34,7 +38,10 @@ describe("SyncSender", function()
       api = {
         updatePage = function(_, _, _, _, _, value)
           options = value
-          return {}
+          return {
+            status_id = 2,
+            last_reached_percent = 20,
+          }
         end,
       },
     }
@@ -45,6 +52,93 @@ describe("SyncSender", function()
       payload = { value = 20, allow_regression = true },
     })
     assert.is_false(options.skip_behind)
+  end)
+
+  it("retains progress when the remote edition is not currently reading", function()
+    local remote = { status_id = 1, last_reached_pages = 0 }
+    local sender = SyncSender:new {
+      api = { updatePage = function() return remote end },
+    }
+
+    local success, result, reason = sender:send {
+      kind = "progress",
+      book_id = "book-1",
+      payload = { value = 52, update_type = "pages", allow_regression = false },
+    }
+
+    assert.is_false(success)
+    assert.are.equal(remote, result)
+    assert.are.equal("not_reading", reason)
+  end)
+
+  it("retains progress when the remote value does not confirm the update", function()
+    local sender = SyncSender:new {
+      api = {
+        updatePage = function()
+          return { status_id = 2, last_reached_pages = 39 }
+        end,
+      },
+    }
+
+    local success, _, reason = sender:send {
+      kind = "progress",
+      book_id = "book-1",
+      payload = { value = 52, update_type = "pages", allow_regression = false },
+    }
+
+    assert.is_false(success)
+    assert.are.equal("progress_unconfirmed", reason)
+  end)
+
+  it("requires exact confirmation for an explicit regression", function()
+    local sender = SyncSender:new {
+      api = {
+        updatePage = function()
+          return { status_id = 2, last_reached_percent = 30 }
+        end,
+      },
+    }
+
+    local success, _, reason = sender:send {
+      kind = "progress",
+      book_id = "book-1",
+      payload = { value = 20, update_type = "percentage", allow_regression = true },
+    }
+
+    assert.is_false(success)
+    assert.are.equal("progress_unconfirmed", reason)
+  end)
+
+  it("accepts progress already confirmed at a newer remote value", function()
+    local sender = SyncSender:new {
+      api = {
+        updatePage = function()
+          return { status_id = 2, last_reached_pages = 60 }
+        end,
+      },
+    }
+
+    assert.is_true(sender:send {
+      kind = "progress",
+      book_id = "book-1",
+      payload = { value = 52, update_type = "pages", allow_regression = false },
+    })
+  end)
+
+  it("accepts an update deliberately skipped because remote progress is ahead", function()
+    local sender = SyncSender:new {
+      api = {
+        updatePage = function()
+          return { _storygraph_skipped = true, last_reached_pages = 60 }
+        end,
+      },
+    }
+
+    assert.is_true(sender:send {
+      kind = "progress",
+      book_id = "book-1",
+      payload = { value = 52, update_type = "pages", allow_regression = false },
+    })
   end)
 
   it("routes ordered status operations", function()

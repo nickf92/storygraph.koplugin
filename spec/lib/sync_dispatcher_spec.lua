@@ -1,5 +1,6 @@
 local SyncDispatcher = require("storygraph/lib/sync_dispatcher")
 local SyncQueue = require("storygraph/lib/sync_queue")
+local SyncSender = require("storygraph/lib/sync_sender")
 
 local function memoryStorage()
   local storage = { data = {} }
@@ -84,6 +85,64 @@ describe("SyncDispatcher", function()
     assert.are.equal("server_error", reason)
     assert.are.equal("progress", failed.operation.kind)
     assert.are.equal(1, queue:count())
+  end)
+
+  it("retains progress when StoryGraph leaves the edition as to-read", function()
+    local queue = SyncQueue:new { storage = memoryStorage() }
+    queuedProgress(queue)
+    local sender = SyncSender:new {
+      api = {
+        updatePage = function()
+          return { status_id = 1, last_reached_percent = 0 }
+        end,
+      },
+    }
+    local dispatcher = SyncDispatcher:new {
+      queue = queue,
+      is_connected = function() return true end,
+      send = function(operation) return sender:send(operation) end,
+    }
+
+    local success, reason = dispatcher:drainOne()
+
+    assert.is_false(success)
+    assert.are.equal("not_reading", reason)
+    assert.are.equal(1, queue:count())
+  end)
+
+  it("sends an explicit reading transition before retained progress", function()
+    local queue = SyncQueue:new { storage = memoryStorage() }
+    queuedProgress(queue)
+    queue:enqueue {
+      document = "book.epub",
+      book_id = "book-1",
+      kind = "status",
+      priority = "before_progress",
+      payload = { status_id = 2 },
+    }
+    local sent = {}
+    local sender = SyncSender:new {
+      api = {
+        updateUserBook = function()
+          sent[#sent + 1] = "status"
+          return { status_id = 2 }
+        end,
+        updatePage = function()
+          sent[#sent + 1] = "progress"
+          return { status_id = 2, last_reached_percent = 40 }
+        end,
+      },
+    }
+    local dispatcher = SyncDispatcher:new {
+      queue = queue,
+      is_connected = function() return true end,
+      send = function(operation) return sender:send(operation) end,
+    }
+
+    assert.is_true(dispatcher:drainOne())
+    assert.is_true(dispatcher:drainOne())
+    assert.are.same({ "status", "progress" }, sent)
+    assert.are.equal(0, queue:count())
   end)
 
   it("retries a retained operation on a later drain", function()

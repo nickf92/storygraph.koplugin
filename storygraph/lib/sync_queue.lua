@@ -58,6 +58,17 @@ local function estimateSize(value, seen)
   return size
 end
 
+local function insertionIndex(operations, candidate)
+  if candidate.kind == "status" and candidate.priority == "before_progress" then
+    for index, queued in ipairs(operations) do
+      if queued.document == candidate.document and queued.kind == "progress" then
+        return index
+      end
+    end
+  end
+  return #operations + 1
+end
+
 local function normalizedState(value)
   if type(value) ~= "table" or value.version ~= VERSION or type(value.operations) ~= "table" then
     return {
@@ -206,7 +217,7 @@ function SyncQueue:enqueue(operation)
   if replaced_index then
     table.remove(projected.operations, replaced_index)
   end
-  table.insert(projected.operations, candidate)
+  table.insert(projected.operations, insertionIndex(projected.operations, candidate), candidate)
   projected.next_id = candidate.id + 1
 
   local document_operations = 0
@@ -226,7 +237,7 @@ function SyncQueue:enqueue(operation)
     if replaced_index then
       table.remove(self.state.operations, replaced_index)
     end
-    table.insert(self.state.operations, candidate)
+    table.insert(self.state.operations, insertionIndex(self.state.operations, candidate), candidate)
     self.state.next_id = candidate.id + 1
     return candidate, nil, replaced_id
   end)

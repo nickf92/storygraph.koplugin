@@ -498,6 +498,10 @@ function HardcoverApp:_enqueueSyncOperation(operation, callback, options)
     self._syncQueueCallbacks[replaced_id] = nil
   end
 
+  if operation.priority == "before_progress" then
+    self._syncQueueRetryBlocked = false
+  end
+
   if callback then
     if self.sync_queue:count() == 1 and not self.sync_dispatcher.busy
         and NetworkManager:isConnected() and not self._networkDisconnecting then
@@ -561,6 +565,15 @@ function HardcoverApp:_onQueuedOperationFailure(operation, reason)
   if reason ~= "superseded" then
     self._syncQueueRetryBlocked = true
     logger.warn("StoryGraph: Queued operation failed", operation.kind, reason)
+    if reason == "not_reading" then
+      UIManager:show(Notification:new {
+        text = _("StoryGraph progress is pending. Mark this book as Currently Reading to synchronize it."),
+      })
+    elseif reason == "progress_unconfirmed" then
+      UIManager:show(Notification:new {
+        text = _("StoryGraph did not confirm the progress update. It remains queued."),
+      })
+    end
   else
     logger.info("StoryGraph: Queued progress superseded by a newer value")
   end

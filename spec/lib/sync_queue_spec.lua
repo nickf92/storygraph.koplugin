@@ -171,6 +171,29 @@ describe("SyncQueue", function()
     assert.are.equal("status", operations[3].kind)
   end)
 
+  it("places an explicit reading transition before pending progress", function()
+    local storage = memoryStorage()
+    local queue = SyncQueue:new { storage = storage }
+    queue:enqueue(progress("book.epub", 52))
+    queue:enqueue {
+      document = "book.epub",
+      book_id = "book-1",
+      kind = "status",
+      priority = "before_progress",
+      payload = { status_id = 2 },
+    }
+
+    local operations = queue:list()
+    assert.are.equal(2, #operations)
+    assert.are.equal("status", operations[1].kind)
+    assert.are.equal(2, operations[1].payload.status_id)
+    assert.are.equal("progress", operations[2].kind)
+
+    operations = SyncQueue:new { storage = storage }:list()
+    assert.are.equal("status", operations[1].kind)
+    assert.are.equal("progress", operations[2].kind)
+  end)
+
   it("deduplicates only consecutive identical status operations", function()
     local storage = memoryStorage()
     local queue = SyncQueue:new { storage = storage }

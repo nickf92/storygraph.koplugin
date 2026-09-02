@@ -1,5 +1,6 @@
 local Api = require("storygraph/lib/hardcover_api")
 local User = require("storygraph/lib/user")
+local HARDCOVER = require("storygraph/lib/constants/hardcover")
 
 local Cache = {}
 Cache.__index = Cache
@@ -16,6 +17,7 @@ function Cache:updateBookStatus(filename, status)
       document = filename,
       book_id = book_id,
       kind = "status",
+      priority = status == HARDCOVER.STATUS.READING and "before_progress" or nil,
       payload = { status_id = status },
     })
     if queued and self.ui.document and self.ui.document.file == filename then
