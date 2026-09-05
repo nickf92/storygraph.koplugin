@@ -72,3 +72,14 @@ To prevent data corruption and ensure compatibility with StoryGraph's unofficial
 - **Configurable Frequency**: Use the **"Version check frequency"** slider to choose how often the plugin checks for updates (from 1 to 20 days). Default is 1 day.
 - **Manual Override**: You can enable **"Ignore version blocks"** to bypass mandatory update requirements. Use this with caution as older versions may break sync if the StoryGraph API changes.
 - **Silent Mode**: Disable **"Show version alert dialog"** if you prefer the plugin to silently stop working when an update is required, rather than showing a notification.
+
+## Development tests
+
+Install Python 3 with venv support, GCC, make, curl, unzip, git, and ripgrep. Then run:
+
+```sh
+scripts/setup-tests.sh
+scripts/test.sh
+```
+
+Setup downloads pinned Lua 5.1, LuaRocks, Busted, and HTML parser dependencies into the ignored `lua_modules/` directory. Set `STORYGRAPH_TEST_RUNTIME` to use another installation directory. Tests and syntax checks run without network access or StoryGraph credentials. The HTML fixtures are synthetic; the parser is htmlparser 0.3.9, so a device smoke test remains useful when KOReader changes its bundled parser.

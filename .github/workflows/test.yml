@@ -9,6 +9,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run Busted
-        uses: lunarmodules/busted@v2.2.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up pinned Lua test dependencies
+        run: scripts/setup-tests.sh
+
+      - name: Run Busted and Lua syntax checks
+        run: scripts/test.sh
 
