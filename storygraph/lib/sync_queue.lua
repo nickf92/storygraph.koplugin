@@ -1,3 +1,5 @@
+local RetryPolicy = require("storygraph/lib/retry_policy")
+
 local SyncQueue = {}
 SyncQueue.__index = SyncQueue
 
@@ -61,7 +63,8 @@ end
 local function insertionIndex(operations, candidate)
   if candidate.kind == "status" and candidate.priority == "before_progress" then
     for index, queued in ipairs(operations) do
-      if queued.document == candidate.document and queued.kind == "progress" then
+      if (queued.document == candidate.document or queued.book_id == candidate.book_id)
+          and queued.kind == "progress" then
         return index
       end
     end
@@ -102,6 +105,7 @@ local function normalizedState(value)
     next_id = math.max(tonumber(value.next_id) or 1, largest_id + 1),
     operations = operations,
     paused_documents = type(value.paused_documents) == "table" and value.paused_documents or {},
+    auth_blocked = value.auth_blocked == true,
   }
 end
 
@@ -115,6 +119,10 @@ function SyncQueue:new(options)
       or DEFAULT_MAX_OPERATIONS_PER_DOCUMENT,
     max_bytes = options.max_bytes or DEFAULT_MAX_BYTES,
     active = {},
+    now = options.now or os.time,
+    random = options.random or math.random,
+    retry_base = options.retry_base or 60,
+    retry_maximum = options.retry_maximum or 3600,
   }, self)
 
   local stored
@@ -185,7 +193,7 @@ function SyncQueue:enqueue(operation)
   local candidate = clone(operation)
   candidate.id = self.state.next_id
   candidate.book_id = tostring(candidate.book_id)
-  candidate.created_at = candidate.created_at or os.time()
+  candidate.created_at = candidate.created_at or self.now()
 
   if candidate.kind == "status" then
     for index = #self.state.operations, 1, -1 do
@@ -210,6 +218,11 @@ function SyncQueue:enqueue(operation)
           and not self.active[queued.id] then
         replaced_index = index
         replaced_id = queued.id
+        -- Page turns must not bypass a failed request's backoff or suspension.
+        candidate.attempt_count = queued.attempt_count
+        candidate.last_error = queued.last_error
+        candidate.next_attempt_at = queued.next_attempt_at
+        candidate.blocked_reason = queued.blocked_reason
         break
       end
     end
@@ -267,6 +280,10 @@ function SyncQueue:relinkDocument(document, book_id, remap)
       if ids[operation.id] then
         remap(operation)
         operation.delivery_state = nil
+        operation.attempt_count = nil
+        operation.last_error = nil
+        operation.next_attempt_at = nil
+        operation.blocked_reason = nil
         operation.book_id = tostring(book_id)
         if operation.kind == "note" then
           operation.payload.book_id = tostring(book_id)
@@ -303,12 +320,109 @@ function SyncQueue:resumeDocument(document)
   end)
 end
 
-function SyncQueue:start()
-  if next(self.active) then
-    return
-  end
+-- Only the first operation for a document/edition may run. A suspended or
+-- delayed document does not prevent unrelated documents from making progress.
+function SyncQueue:_candidates()
+  local candidates, documents, books = {}, {}, {}
+  if self.state.auth_blocked then return candidates end
   for _, operation in ipairs(self.state.operations) do
-    if not self.active[operation.id] and not self.state.paused_documents[operation.document] then
+    local first = not documents[operation.document] and not books[operation.book_id]
+    documents[operation.document], books[operation.book_id] = true, true
+    if first and not self.state.paused_documents[operation.document]
+        and not operation.blocked_reason
+        and not (operation.kind == "note" and operation.delivery_state) then
+      candidates[#candidates + 1] = operation
+    end
+  end
+  return candidates
+end
+
+function SyncQueue:nextAttemptAt()
+  local earliest
+  for _, operation in ipairs(self:_candidates()) do
+    local due = tonumber(operation.next_attempt_at) or self.now()
+    earliest = earliest and math.min(earliest, due) or due
+  end
+  return earliest
+end
+
+function SyncQueue:isDocumentPaused(document)
+  return self.state.paused_documents[document] == true
+end
+
+function SyncQueue:isAuthBlocked()
+  return self.state.auth_blocked == true
+end
+
+function SyncQueue:blockAuthentication()
+  return self:_mutate(function() self.state.auth_blocked = true; return true end)
+end
+
+function SyncQueue:credentialsChanged()
+  return self:_mutate(function()
+    self.state.auth_blocked = false
+    for _, operation in ipairs(self.state.operations) do
+      if operation.blocked_reason == "auth" then
+        operation.blocked_reason = nil
+        operation.next_attempt_at = nil
+      end
+    end
+    return true
+  end)
+end
+
+function SyncQueue:retryOperation(id)
+  for _, operation in ipairs(self.state.operations) do
+    if operation.id == id then
+      if self.active[id] then return nil, "operation_active" end
+      if operation.kind == "note" and operation.delivery_state then
+        return nil, "reconciliation_required"
+      end
+      return self:_mutate(function()
+        for _, pending in ipairs(self.state.operations) do
+          if pending.id == id then
+            pending.blocked_reason = nil
+            pending.next_attempt_at = nil
+            pending.attempt_count = nil
+          end
+        end
+        return true
+      end)
+    end
+  end
+  return nil, "not_found"
+end
+
+-- Only a human who has checked the reading journal can resolve an uncertain
+-- note: true acknowledges delivery, false explicitly authorizes a new attempt.
+function SyncQueue:resolveNote(id, delivered)
+  if type(delivered) ~= "boolean" then return nil, "invalid_resolution" end
+  for index, operation in ipairs(self.state.operations) do
+    if operation.id == id then
+      if self.active[id] then return nil, "operation_active" end
+      if operation.kind ~= "note" or not operation.delivery_state then return nil, "not_uncertain" end
+      return self:_mutate(function()
+        if delivered then
+          table.remove(self.state.operations, index)
+        else
+          local pending = self.state.operations[index]
+          pending.delivery_state = nil
+          pending.blocked_reason = nil
+          pending.next_attempt_at = nil
+          pending.attempt_count = nil
+          pending.last_error = nil
+        end
+        return true
+      end)
+    end
+  end
+  return nil, "not_found"
+end
+
+function SyncQueue:start()
+  if next(self.active) then return end
+  for _, operation in ipairs(self:_candidates()) do
+    if (tonumber(operation.next_attempt_at) or 0) <= self.now() then
       local original = clone(operation)
       local saved, err = self:_mutate(function()
         for _, pending in ipairs(self.state.operations) do
@@ -339,12 +453,23 @@ function SyncQueue:finish(operation_id, success, outcome)
   end
   self.active[operation_id] = nil
   if not success then
+    outcome = outcome or {status = "uncertain", category = "transient", reason = "send_failed"}
     if active_operation and active_operation.kind == "progress" then
       for _, operation in ipairs(self.state.operations) do
         if operation.id ~= operation_id
             and operation.kind == "progress"
             and operation.document == active_operation.document then
           local removed, err, detail = self:_mutate(function()
+            local plan = RetryPolicy:plan(active_operation, outcome, self.now(), self.random, self.retry_base, self.retry_maximum)
+            for _, pending in ipairs(self.state.operations) do
+              if pending.id == operation.id then
+                pending.attempt_count = plan.attempt_count
+                pending.last_error = plan.last_error
+                pending.next_attempt_at = plan.next_attempt_at
+                pending.blocked_reason = plan.blocked_reason
+              end
+            end
+            if outcome.category == "auth" then self.state.auth_blocked = true end
             table.remove(self.state.operations, active_index)
             return true
           end)
@@ -357,8 +482,14 @@ function SyncQueue:finish(operation_id, success, outcome)
     end
     if active_index then
       return self:_mutate(function()
-        self.state.operations[active_index].delivery_state =
-          not (outcome and outcome.status == "rejected") and "uncertain" or nil
+        local pending = self.state.operations[active_index]
+        pending.delivery_state = outcome.status == "uncertain" and "uncertain" or nil
+        local plan = RetryPolicy:plan(pending, outcome, self.now(), self.random, self.retry_base, self.retry_maximum)
+        pending.attempt_count = plan.attempt_count
+        pending.last_error = plan.last_error
+        pending.next_attempt_at = plan.next_attempt_at
+        pending.blocked_reason = plan.blocked_reason
+        if outcome.category == "auth" then self.state.auth_blocked = true end
         return false
       end)
     end
@@ -371,6 +502,15 @@ function SyncQueue:finish(operation_id, success, outcome)
 
   local removed, err, detail = self:_mutate(function()
     table.remove(self.state.operations, active_index)
+    if active_operation.kind == "status" and active_operation.payload.status_id == 2 then
+      for _, pending in ipairs(self.state.operations) do
+        if (pending.document == active_operation.document or pending.book_id == active_operation.book_id)
+            and pending.last_error == "not_reading" then
+          pending.blocked_reason = nil
+          pending.next_attempt_at = nil
+        end
+      end
+    end
     return true
   end)
   if not removed then

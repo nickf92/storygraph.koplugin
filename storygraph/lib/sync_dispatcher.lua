@@ -34,13 +34,20 @@ function SyncDispatcher:drainOne()
   self.busy = true
   local called, success, result, reason, outcome = pcall(self.send, operation)
   if not called then
-    reason = success
+    reason = "send_exception"
     success = false
     result = nil
   else
     success = success == true
   end
 
+  if not success then
+    outcome = outcome or {status = "uncertain", category = "transient", reason = reason or "send_failed"}
+    if operation.kind == "note" and outcome.status == "uncertain" and outcome.category ~= "auth" then
+      outcome.category, outcome.reason = "reconciliation", "note_uncertain"
+      reason = outcome.reason
+    end
+  end
   local completed, finish_error = self.queue:finish(operation.id, success, outcome)
   self.busy = false
 

@@ -19,6 +19,7 @@ local SpinWidget = require("ui/widget/spinwidget")
 local Api = require("storygraph/lib/hardcover_api")
 local Github = require("storygraph/lib/github")
 local User = require("storygraph/lib/user")
+local QueueMenu = require("storygraph/lib/ui/sync_queue_menu")
 local _t = require("storygraph/lib/table_util")
 
 local HARDCOVER = require("storygraph/lib/constants/hardcover")
@@ -58,6 +59,18 @@ end
 
 function HardcoverMenu:getSubMenuItems(book_view)
   local menu_items = {
+    {
+      text_func = function()
+        return _("Pending synchronization") .. " (" .. self.app.sync_queue:count() .. ")"
+      end,
+      sub_item_table_func = function()
+        return QueueMenu:items(self.app.sync_queue, {
+          retry = function(id, delivered) return self.app:retryPendingOperation(id, delivered) end,
+          confirm = function(options) self.dialog_manager:confirm(options) end,
+          show = function(text) UIManager:show(InfoMessage:new { text = text }) end,
+        })
+      end,
+    },
     book_view and {
       text_func = function()
         if self.settings:bookLinked() then

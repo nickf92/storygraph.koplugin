@@ -35,8 +35,8 @@ describe("Durable mutation delivery", function()
     assert.is_false(dispatcher(q, api):drainOne())
     q = Queue:new { storage = disk }
     local success, reason = dispatcher(q, api):drainOne()
-    assert.is_false(success)
-    assert.are.equal("note_uncertain", reason)
+    assert.is_true(success)
+    assert.are.equal("empty", reason) -- uncertain note is suspended, not resent
     assert.are.equal(1, posts)
     assert.are.equal(1, q:count())
   end)
@@ -55,7 +55,7 @@ describe("Durable mutation delivery", function()
     assert.is_false(dispatcher(q, api):drainOne())
     disk.flush = function() end
     q = Queue:new { storage = disk }
-    assert.is_false(dispatcher(q, api):drainOne())
+    assert.is_true(dispatcher(q, api):drainOne()) -- no eligible operation
     assert.are.equal(1, posts)
   end)
 
@@ -72,7 +72,7 @@ describe("Durable mutation delivery", function()
     end
     assert.is_false(dispatcher(q, api):drainOne())
     fail_refresh = false
-    q = Queue:new { storage = disk }
+    q = Queue:new { storage = disk, now = function() return os.time() + 3600 end }
     assert.is_true(dispatcher(q, api):drainOne())
     assert.are.equal(1, posts)
     assert.are.equal(0, q:count())

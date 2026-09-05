@@ -14,6 +14,7 @@ describe("Application sync authorization", function()
     }
     app.settings = { readSetting = function() return false end }
     queue = SyncQueue:new()
+    app.sync_queue = queue
     for _, book in ipairs({ "a", "b" }) do
       queue:enqueue { document = book, book_id = book, kind = "note", payload = { entry = book } }
     end

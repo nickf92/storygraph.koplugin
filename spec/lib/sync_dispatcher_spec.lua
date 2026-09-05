@@ -161,6 +161,9 @@ describe("SyncDispatcher", function()
 
     assert.is_false(dispatcher:drainOne())
     assert.are.equal(1, queue:count())
+    assert.is_true(dispatcher:drainOne()) -- waiting: no second attempt yet
+    assert.are.equal(1, attempts)
+    queue.now = function() return os.time() + 3600 end
     assert.is_true(dispatcher:drainOne())
     assert.are.equal(0, queue:count())
     assert.are.equal(2, attempts)
@@ -193,6 +196,8 @@ describe("SyncDispatcher", function()
     assert.is_true(success)
     assert.are.equal("superseded", reason)
     assert.are.equal(1, queue:count())
+    assert.is_nil(queue:start())
+    queue.now = function() return os.time() + 3600 end
     assert.is_true(dispatcher:drainOne())
     assert.are.equal(0, queue:count())
   end)
@@ -237,7 +242,7 @@ describe("SyncDispatcher", function()
 
     local success, reason = dispatcher:drainOne()
     assert.is_false(success)
-    assert.matches("unexpected", reason)
+    assert.are.equal("send_exception", reason)
     assert.are.equal(1, queue:count())
     assert.is_false(dispatcher.busy)
   end)

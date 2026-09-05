@@ -163,7 +163,10 @@ end
 
 -- Preserve the legacy first return value; queued callers also receive a uniform
 -- outcome. A refresh can never turn an acknowledged note into another POST.
-local function finishMutation(self, operation, code, headers)
+local function finishMutation(self, operation, code, headers, body)
+  if type(body) == "string" and body:match("<form[^>]-action=[\"'][^\"']*/users/sign_in") then
+    code = 401
+  end
   local outcome = MutationResult:response(code, headers, "write")
   if outcome.category == "auth" and self.on_error then self.on_error("Unauthorized") end
   if outcome.status ~= "confirmed" then return nil, outcome end
@@ -725,7 +728,7 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   -- Consider 2xx or 302 (redirect back to book) as potential success
   return finishMutation(self, {
     kind = "status", book_id = book_id, payload = { status_id = status_id },
-  }, code, resp_headers)
+  }, code, resp_headers, resp)
 end
 
 function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, options)
@@ -815,7 +818,7 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, o
   return finishMutation(self, {
     kind = "progress", book_id = book_id,
     payload = { value = value, update_type = update_type, allow_regression = not options.skip_behind },
-  }, code, resp_headers)
+  }, code, resp_headers, resp)
 end
 
 function HardcoverApi:createRead(book_id, value, started_at, update_type)
@@ -884,7 +887,7 @@ function HardcoverApi:createJournalEntry(data)
 
   logger.info("StoryGraph: Journal entry response code: " .. (code or "nil"))
   
-  return finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers)
+  return finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers, resp)
 end
 
 function HardcoverApi:removeRead(user_book_id)

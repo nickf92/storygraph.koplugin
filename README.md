@@ -63,6 +63,11 @@ Pending offline operations are stored in `storygraphsync_queue.lua` in the KORea
 
 Changing the linked edition remaps pending progress to your current document position and pending notes to their original positions. If an edition change is interrupted, that document's queued updates remain paused, including after restarting KOReader. Retry linking the intended edition to resume them.
 
+Temporary failures retry with increasing waits while connected; reconnecting or turning pages does not reset the wait. A failed document does not block independent documents. Authentication failures wait for updated credentials, while permanent failures need an explicit retry from **Pending synchronization**.
+
+Notes with an uncertain delivery result are never resent automatically. In **Pending synchronization**, view the note and check the StoryGraph reading journal. Choose **Already present on StoryGraph** to acknowledge it, or **Not present: send again** to authorize another attempt. If StoryGraph requires a rereading session, start it on the website before retrying the pending reading-status change.
+
+
 ## Versioning & Mandatory Updates
 
 To prevent data corruption and ensure compatibility with StoryGraph's unofficial API, the plugin includes a remote versioning system.
@@ -83,3 +88,5 @@ scripts/test.sh
 ```
 
 Setup downloads pinned Lua 5.1, LuaRocks, Busted, and HTML parser dependencies into the ignored `lua_modules/` directory. Set `STORYGRAPH_TEST_RUNTIME` to use another installation directory. Tests and syntax checks run without network access or StoryGraph credentials. The HTML fixtures are synthetic; the parser is htmlparser 0.3.9, so a device smoke test remains useful when KOReader changes its bundled parser.
+
+See [TESTING.md](TESTING.md) for coverage and the KOReader device smoke test.

@@ -118,12 +118,15 @@ function HardcoverApp:init()
   User.settings = self.settings
   Api.settings = self.settings
   Api.on_error = function(err)
-    if not err or not self.enabled then
+    if not err then
       return
     end
 
     if err == "Unauthorized" or (err.message and string.find(err.message, "login")) then
-      self:disable()
+      if self.sync_queue then self.sync_queue:blockAuthentication() end
+      self:_cancelSyncQueueRetry()
+      if self._authNotified then return end
+      self._authNotified = true
       UIManager:show(InfoMessage:new {
         text = "Your StoryGraph session cookie is not valid or has expired. Please update it.",
         icon = "notice-warning",
@@ -185,7 +188,9 @@ function HardcoverApp:init()
     can_attempt = function()
       if self._syncQueueFlushJob then return false, "flush_scheduled" end
       if self.sync_dispatcher.busy then return false, "dispatcher_busy" end
-      if self._syncQueueRetryBlocked then return false, "retry_blocked" end
+      if self._syncQueueSuspended then return false, "suspended" end
+      local due = self.sync_queue:nextAttemptAt()
+      if not due or due > self.sync_queue.now() then return false, "not_due" end
       if self._networkDisconnecting then return false, "network_disconnecting" end
       return true
     end,
@@ -357,6 +362,7 @@ function HardcoverApp:onStoryGraphNote(note_params)
 end
 
 function HardcoverApp:disable()
+  self:_cancelSyncQueueRetry()
   self.enabled = false
   if self.menu then
     self.menu.enabled = false
@@ -504,10 +510,6 @@ function HardcoverApp:_enqueueSyncOperation(operation, callback, options)
     self._syncQueueCallbacks[replaced_id] = nil
   end
 
-  if operation.priority == "before_progress" then
-    self._syncQueueRetryBlocked = false
-  end
-
   if callback then
     if self.sync_queue:count() == 1 and not self.sync_dispatcher.busy
         and NetworkManager:isConnected() and not self._networkDisconnecting then
@@ -537,7 +539,8 @@ function HardcoverApp:_refreshAfterMutation(operation)
       and tostring(self.settings:getLinkedBookId()) == tostring(operation.book_id)
   end
   UIManager:nextTick(function()
-    if not current() or not self:isActive() then return end
+    if not current() or not self:isActive() or self._syncQueueSuspended
+        or not NetworkManager:isConnected() then return end
     Trapper:wrap(function()
       local ok, state = pcall(Api.findUserBook, Api, operation.book_id, nil, true)
       if ok and type(state) == "table" and state.id and current() then
@@ -592,13 +595,17 @@ function HardcoverApp:_onQueuedOperationFailure(operation, reason)
   local callback = self._syncQueueCallbacks[operation.id]
   self._syncQueueCallbacks[operation.id] = nil
   if reason ~= "superseded" then
-    self._syncQueueRetryBlocked = true
     logger.warn("StoryGraph: Queued operation failed", operation.kind, reason)
-    if reason == "not_reading" then
+    local changed_error = operation.last_error ~= reason
+    if changed_error and reason == "note_uncertain" then
+      UIManager:show(Notification:new {
+        text = _("StoryGraph could not confirm a note. Check Pending synchronization before retrying it."),
+      })
+    elseif changed_error and reason == "not_reading" then
       UIManager:show(Notification:new {
         text = _("StoryGraph progress is pending. Mark this book as Currently Reading to synchronize it."),
       })
-    elseif reason == "progress_unconfirmed" then
+    elseif changed_error and reason == "progress_unconfirmed" then
       UIManager:show(Notification:new {
         text = _("StoryGraph did not confirm the progress update. It remains queued."),
       })
@@ -685,28 +692,60 @@ function HardcoverApp:_relinkQueuedOperations(filename, book)
     return false
   end
   for id in pairs(changed) do self._syncQueueCallbacks[id] = nil end
-  if next(changed) then self._syncQueueRetryBlocked = false end
   self.page_update_pending = self.sync_queue:hasPending(filename, "progress")
+  return true
+end
+
+function HardcoverApp:_cancelSyncQueueRetry()
+  if self._syncQueueRetryJob then UIManager:unschedule(self._syncQueueRetryJob) end
+  self._syncQueueRetryJob = nil
+end
+
+function HardcoverApp:_scheduleSyncQueueRetry()
+  self:_cancelSyncQueueRetry()
+  if self._syncQueueSuspended or not self:isActive() or self._networkDisconnecting
+      or not NetworkManager:isConnected() then return end
+  local due = self.sync_queue:nextAttemptAt()
+  if not due then return end
+  local job
+  job = function()
+    if self._syncQueueRetryJob ~= job then return end
+    self._syncQueueRetryJob = nil
+    self:_requestSyncQueueFlush()
+  end
+  self._syncQueueRetryJob = job
+  UIManager:scheduleIn(math.max(1, due - self.sync_queue.now()), job)
+end
+
+function HardcoverApp:retryPendingOperation(id, delivered)
+  local saved, err
+  if delivered ~= nil then
+    saved, err = self.sync_queue:resolveNote(id, delivered)
+  else
+    saved, err = self.sync_queue:retryOperation(id)
+  end
+  if not saved then self:_notifySyncQueueError(err); return false end
+  self._syncQueueCallbacks[id] = nil
+  self:_requestSyncQueueFlush()
   return true
 end
 
 function HardcoverApp:_drainSyncQueueNow()
   if self._editionTransitionInProgress then return false, "edition_transition" end
-  if not self:isActive() then
-    return false, "sync_disabled"
-  end
-  if self._syncQueueRetryBlocked then
-    return false, "retry_blocked"
-  end
-  while NetworkManager:isConnected() and not self._networkDisconnecting
-      and not self._syncQueueRetryBlocked do
-    -- Network calls may yield while a version check disables synchronization.
-    if not self:isActive() then
-      return false, "sync_disabled"
+  if self._syncQueueSuspended then return false, "suspended" end
+  if not self:isActive() then return false, "sync_disabled" end
+  while NetworkManager:isConnected() and not self._networkDisconnecting do
+    if not self:isActive() or self._syncQueueSuspended then return false, "sync_disabled" end
+    local success, status, operation = self.sync_dispatcher:drainOne()
+    if status == "empty" then
+      self:_scheduleSyncQueueRetry()
+      return true, status
     end
-    local success, status = self.sync_dispatcher:drainOne()
-    if not success or status == "empty" then
-      return success, status
+    -- Remote failures have been persisted on their operation; try independent
+    -- documents. Storage failures/busy dispatchers must stop this drain.
+    if not success and (not operation or status == "persist_failed" or status == "not_found") then
+      if status == "persist_failed" then self:_notifySyncQueueError(status) end
+      return false, status
     end
   end
   return false, "offline"
@@ -715,7 +754,7 @@ end
 function HardcoverApp:_requestSyncQueueFlush()
   if not self:isActive() or self._editionTransitionInProgress
       or self._syncQueueFlushJob or self.sync_dispatcher.busy
-      or self._syncQueueRetryBlocked or self._networkDisconnecting
+      or self._syncQueueSuspended or self._networkDisconnecting
       or not NetworkManager:isConnected() then
     return false
   end
@@ -761,7 +800,9 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
       self.hardcover:tryAutolink(true)
     end
   elseif field == SETTING.SESSION_COOKIE or field == SETTING.REMEMBER_TOKEN then
-    self._syncQueueRetryBlocked = false
+    local saved, err = self.sync_queue:credentialsChanged()
+    if not saved then self:_notifySyncQueueError(err); return end
+    self._authNotified = false
     self:_requestSyncQueueFlush()
   elseif field == SETTING.VERSION_CHECK_INTERVAL then
     self.version_check:schedule(1, true)
@@ -960,6 +1001,7 @@ function HardcoverApp:_handleVersionInfo(info)
         timeout = 5
       })
     else
+      self:_cancelSyncQueueRetry()
       self:cancelPendingUpdates()
 
       if self.settings:readSetting(SETTING.SHOW_VERSION_DIALOG) ~= false then
@@ -1013,6 +1055,7 @@ function HardcoverApp:cancelPendingUpdates(discard_progress)
 end
 
 function HardcoverApp:onDocumentClose()
+  self:_cancelSyncQueueRetry()
   UIManager:unschedule(self.startReadCache)
 
   local should_flush = self.state.progress_dirty or self.page_update_pending
@@ -1032,6 +1075,8 @@ function HardcoverApp:onDocumentClose()
 end
 
 function HardcoverApp:onSuspend()
+  self._syncQueueSuspended = true
+  self:_cancelSyncQueueRetry()
   local should_flush = self.state.progress_dirty or self.page_update_pending
   self:cancelPendingUpdates()
 
@@ -1045,10 +1090,10 @@ function HardcoverApp:onSuspend()
 end
 
 function HardcoverApp:onResume()
+  self._syncQueueSuspended = false
   if self.ui.document then
     self:_startDocumentSession()
   end
-  self._syncQueueRetryBlocked = false
   self:_requestSyncQueueFlush()
   if self.ui.document and self.settings:syncEnabled()
       and (NetworkManager:isConnected() or self.settings:readSetting(SETTING.ENABLE_WIFI)) then
@@ -1080,6 +1125,7 @@ function HardcoverApp:updatePageNow(callback, value, update_type, allow_regressi
 end
 
 function HardcoverApp:onNetworkDisconnecting()
+  self:_cancelSyncQueueRetry()
   --logger.warn("HARDCOVER on disconnecting")
   self._networkDisconnecting = true
 
@@ -1096,7 +1142,6 @@ end
 
 function HardcoverApp:onNetworkConnected()
   self._networkDisconnecting = false
-  self._syncQueueRetryBlocked = false
   local pending = self.sync_queue:count()
   if pending > 0 and not self.background_sync:isWifiAttemptPending() then
     logger.info(("StoryGraph: network connected; requesting normal queue flush, pending=%d"):format(pending))
