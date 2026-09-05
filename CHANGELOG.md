@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.2.9 (2026-09-05)
+
+### Features
+
+* Retry temporary synchronization failures per operation with persisted exponential backoff and jitter. Respect server retry delays and preserve ordering for the same document or edition while allowing independent documents to continue.
+* Add a Pending synchronization menu with note previews, explicit retry, and manual reconciliation of uncertain note delivery.
+
+### Fixes
+
+* Stop queued synchronization while the plugin is disabled, including scheduled flushes and blocks applied between sends. Respect the explicit version-block override.
+* Retarget pending operations when changing editions: derive progress from the current document position and remap notes from their original positions. Persist an edition-change pause until the new link is saved.
+* Separate confirmed, rejected, and uncertain mutation outcomes. Confirm statuses and progress against the requested state; an acknowledged note no longer depends on a subsequent refresh.
+* Persist in-flight delivery before sending. Reconcile uncertain progress/status by reading first, and never automatically resend an uncertain note after a timeout, restart, or failed queue deletion.
+* Wait for credential updates after authentication failure and for explicit action after permanent errors. Cancel retry timers on suspension/disconnection and do not bypass backoff when progress is coalesced.
+* Do not silently start a rereading session after a rejected status request, or accept a rendered login form as a successful note update.
+* Refresh confirmed notes independently and ignore stale document-session results. Avoid repeated notifications for unchanged retry errors.
+
+### Compatibility
+
+* Migrate queue schema v1 to v2 without losing pending operations. Older plugins that support only v1 refuse the upgraded queue.
+
+### Tests
+
+* Add a reproducible, pinned Lua 5.1/Busted environment shared by development and release CI, with synthetic HTML fixtures and no live StoryGraph access during tests.
+* Cover HTTP outcomes, interrupted delivery, queue persistence and migration, retry timing, independent documents, application lifecycle, and explicit note-recovery confirmation.
+* Document a separate KOReader device smoke test in TESTING.md.
+
 ## 0.2.8 (2026-09-02)
 
 ### Fixes
