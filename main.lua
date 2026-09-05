@@ -583,11 +583,18 @@ function HardcoverApp:_onQueuedOperationFailure(operation, reason)
 end
 
 function HardcoverApp:_drainSyncQueueNow()
+  if not self:isActive() then
+    return false, "sync_disabled"
+  end
   if self._syncQueueRetryBlocked then
     return false, "retry_blocked"
   end
   while NetworkManager:isConnected() and not self._networkDisconnecting
       and not self._syncQueueRetryBlocked do
+    -- Network calls may yield while a version check disables synchronization.
+    if not self:isActive() then
+      return false, "sync_disabled"
+    end
     local success, status = self.sync_dispatcher:drainOne()
     if not success or status == "empty" then
       return success, status
@@ -597,7 +604,7 @@ function HardcoverApp:_drainSyncQueueNow()
 end
 
 function HardcoverApp:_requestSyncQueueFlush()
-  if self._syncQueueFlushJob or self.sync_dispatcher.busy
+  if not self:isActive() or self._syncQueueFlushJob or self.sync_dispatcher.busy
       or self._syncQueueRetryBlocked or self._networkDisconnecting
       or not NetworkManager:isConnected() then
     return false
