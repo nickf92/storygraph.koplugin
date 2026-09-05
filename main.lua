@@ -301,7 +301,13 @@ function HardcoverApp:init()
     settings = self.settings,
     state = self.state,
     ui = self.ui,
-    wifi = self.wifi
+    wifi = self.wifi,
+    with_link_change = function(callback)
+      return self:_withEditionTransition(callback)
+    end,
+    relink_document = function(filename, book)
+      return self:_relinkQueuedOperations(filename, book)
+    end,
   }
 
   self.menu = HardcoverMenu:new {
@@ -582,7 +588,87 @@ function HardcoverApp:_onQueuedOperationFailure(operation, reason)
   end
 end
 
+function HardcoverApp:_withEditionTransition(callback)
+  if self._editionTransitionInProgress or self.sync_dispatcher.busy then
+    self.dialog_manager:showError("StoryGraph is synchronizing. Please retry changing the edition after it finishes.")
+    return false
+  end
+  local filename = self.ui.document and self.ui.document.file
+  if not filename then return false end
+  local paused, pause_error = self.sync_queue:pauseDocument(filename)
+  if not paused then
+    self:_notifySyncQueueError(pause_error)
+    return false
+  end
+  self._editionTransitionInProgress = true
+  self:cancelPendingUpdates()
+  local called, result = pcall(callback)
+  self._editionTransitionInProgress = false
+  if called and result then
+    local resumed, resume_error = self.sync_queue:resumeDocument(filename)
+    if not resumed then
+      self:_notifySyncQueueError(resume_error)
+      result = false
+    end
+  end
+  if not called or not result then
+    self.dialog_manager:showError("StoryGraph updates for this document are paused. Retry linking the intended edition to resume synchronization.")
+  end
+  self:_requestSyncQueueFlush()
+  if not called then error(result) end
+  return result
+end
+
+function HardcoverApp:_relinkQueuedOperations(filename, book)
+  if not self.ui.document or self.ui.document.file ~= filename then return false end
+  local document_pages = self.ui.document:getPageCount()
+  local current_page = self.ui:getCurrentPage()
+  local old_pages = self.settings:pages()
+  local remote_pages = tonumber(book.pages)
+  local by_pages = self.settings:syncByRemotePages() and remote_pages and remote_pages > 0
+  local update_type = by_pages and "pages" or "percentage"
+  local map = function(page)
+    local percent, mapped_page = self.page_mapper:getRemotePagePercent(page, document_pages, remote_pages)
+    return by_pages and (mapped_page or remote_pages) or math.floor(percent * 100 + 0.5)
+  end
+  local changed, err = self.sync_queue:relinkDocument(filename, book.book_id, function(operation)
+    local payload = operation.payload
+    if operation.kind == "progress" then
+      payload.value = map(current_page)
+      payload.local_page = current_page
+      payload.update_type = update_type
+      -- Permission to regress the source edition does not apply to the target.
+      payload.allow_regression = false
+      payload.started_at = nil
+    elseif operation.kind == "note" then
+      local note_page = tonumber(payload.local_page)
+      if not note_page then
+        -- Older queue entries may only have their original edition position.
+        local progress = assert(tonumber(payload.progress), "missing note position")
+        if payload.progress_type == "pages" then
+          assert(tonumber(old_pages) and tonumber(old_pages) > 0, "missing source edition page count")
+          note_page = self.page_mapper:getUnmappedPage(progress, document_pages, old_pages)
+        else
+          note_page = self.page_mapper:getUnmappedPage(progress, document_pages, 100)
+        end
+        payload.local_page = note_page
+      end
+      payload.progress = map(note_page)
+      payload.progress_type = update_type
+    end
+  end)
+  if not changed then
+    self:_notifySyncQueueError(err)
+    return false
+  end
+  for id in pairs(changed) do self._syncQueueCallbacks[id] = nil end
+  if next(changed) then self._syncQueueRetryBlocked = false end
+  self.page_update_pending = self.sync_queue:hasPending(filename, "progress")
+  return true
+end
+
 function HardcoverApp:_drainSyncQueueNow()
+  if self._editionTransitionInProgress then return false, "edition_transition" end
   if not self:isActive() then
     return false, "sync_disabled"
   end
@@ -604,7 +690,8 @@ function HardcoverApp:_drainSyncQueueNow()
 end
 
 function HardcoverApp:_requestSyncQueueFlush()
-  if not self:isActive() or self._syncQueueFlushJob or self.sync_dispatcher.busy
+  if not self:isActive() or self._editionTransitionInProgress
+      or self._syncQueueFlushJob or self.sync_dispatcher.busy
       or self._syncQueueRetryBlocked or self._networkDisconnecting
       or not NetworkManager:isConnected() then
     return false
@@ -660,6 +747,11 @@ end
 
 function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
   update_type = update_type or "percentage"
+
+  if self._editionTransitionInProgress then
+    if callback then callback(nil, "edition_transition") end
+    return
+  end
 
   if not self:syncFileUpdates(filename) then
     if callback then callback(nil, "sync_disabled") end

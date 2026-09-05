@@ -52,7 +52,9 @@ function Hardcover:showLinkBookDialog(force_search, link_callback)
 end
 
 function Hardcover:showChangeEditionDialog(callback)
+  local document = self.ui.document
   local editions = Api:findEditions(self.settings:getLinkedBookId(), User:getId())
+  if self.ui.document ~= document then return end
   self.dialog_manager:buildSearchDialog(
     "Select edition",
     editions,
@@ -60,17 +62,20 @@ function Hardcover:showChangeEditionDialog(callback)
       book_id = self.settings:getLinkedBookId()
     },
     function(book)
-      if book.book_id ~= self.settings:getLinkedBookId() then
-        local success = Api:switchEdition(self.settings:getLinkedBookId(), book.book_id)
-        if not success then
-          self.dialog_manager:showError("Failed to switch edition on StoryGraph. Please try again.")
-          return
+      if self.ui.document ~= document then return end
+      self:_withLinkChange(function()
+        if book.book_id ~= self.settings:getLinkedBookId() then
+          local success = Api:switchEdition(self.settings:getLinkedBookId(), book.book_id)
+          if not success then
+            self.dialog_manager:showError("Failed to switch edition on StoryGraph. Please try again.")
+            return false
+          end
         end
-      end
-      self:linkBook(book)
-      if callback then
-        callback(book)
-      end
+        if self.ui.document ~= document then return false end
+        if not self:_linkBook(book) then return false end
+        if callback then callback(book) end
+        return true
+      end)
     end
   )
 end
@@ -83,10 +88,21 @@ function Hardcover:updateCurrentBookStatus(status)
 end
 
 function Hardcover:linkBook(book)
-  local filename = self.ui.document.file
+  return self:_withLinkChange(function() return self:_linkBook(book) end)
+end
+
+function Hardcover:_withLinkChange(callback)
+  if self.with_link_change then return self.with_link_change(callback) end
+  return callback()
+end
+
+function Hardcover:_linkBook(book)
+  local document = self.ui.document
+  local filename = document.file
 
   -- 1. Fetch remote status (API handles redirection and audio filtering internally)
   local status = Api:findUserBook(book.book_id) or {}
+  if self.ui.document ~= document then return false end
   
   -- 2. If the final resolved edition is Audio, fail the linking process
   if status.is_audio then
@@ -102,6 +118,10 @@ function Hardcover:linkBook(book)
     logger.info("StoryGraph: Redirecting link to your active edition: " .. status.id)
     book.book_id = status.id
     book.pages = status.book_num_of_pages or book.pages
+  end
+
+  if self.relink_document and not self.relink_document(filename, book) then
+    return false
   end
 
   local delete = {}

@@ -75,6 +75,7 @@ local function normalizedState(value)
       version = VERSION,
       next_id = 1,
       operations = {},
+      paused_documents = {},
     }
   end
 
@@ -100,6 +101,7 @@ local function normalizedState(value)
     version = VERSION,
     next_id = math.max(tonumber(value.next_id) or 1, largest_id + 1),
     operations = operations,
+    paused_documents = type(value.paused_documents) == "table" and value.paused_documents or {},
   }
 end
 
@@ -243,12 +245,66 @@ function SyncQueue:enqueue(operation)
   end)
 end
 
+-- Retarget a document's pending operations in a single durable mutation. The
+-- caller supplies the document/edition mapping; the queue owns ordering and IDs.
+function SyncQueue:relinkDocument(document, book_id, remap)
+  local ids = {}
+  for _, operation in ipairs(self.state.operations) do
+    if operation.document == document and operation.book_id ~= tostring(book_id) then
+      if self.active[operation.id] then
+        return nil, "operation_active"
+      end
+      ids[operation.id] = true
+    end
+  end
+  if not next(ids) then return {} end
+
+  return self:_mutate(function()
+    for _, operation in ipairs(self.state.operations) do
+      if ids[operation.id] then
+        remap(operation)
+        operation.book_id = tostring(book_id)
+        if operation.kind == "note" then
+          operation.payload.book_id = tostring(book_id)
+        end
+      end
+    end
+    if estimateSize(self.state) > self.max_bytes then
+      error("remapped queue exceeds size limit")
+    end
+    return ids
+  end)
+end
+
+-- Persist the pause before a remote edition switch. If switching or saving the
+-- local link fails, a restart must not send updates to a possibly stale edition.
+function SyncQueue:pauseDocument(document)
+  for _, operation in ipairs(self.state.operations) do
+    if operation.document == document and self.active[operation.id] then
+      return nil, "operation_active"
+    end
+  end
+  if self.state.paused_documents[document] then return true end
+  return self:_mutate(function()
+    self.state.paused_documents[document] = true
+    return true
+  end)
+end
+
+function SyncQueue:resumeDocument(document)
+  if not self.state.paused_documents[document] then return true end
+  return self:_mutate(function()
+    self.state.paused_documents[document] = nil
+    return true
+  end)
+end
+
 function SyncQueue:start()
   if next(self.active) then
     return
   end
   for _, operation in ipairs(self.state.operations) do
-    if not self.active[operation.id] then
+    if not self.active[operation.id] and not self.state.paused_documents[operation.document] then
       self.active[operation.id] = true
       return clone(operation)
     end

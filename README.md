@@ -61,6 +61,8 @@ When enabled, the plugin will periodically sync your progress to StoryGraph:
 
 Pending offline operations are stored in `storygraphsync_queue.lua` in the KOReader settings directory. The file may temporarily contain note text; each pending entry is removed after StoryGraph confirms its update.
 
+Changing the linked edition remaps pending progress to your current document position and pending notes to their original positions. If an edition change is interrupted, that document's queued updates remain paused, including after restarting KOReader. Retry linking the intended edition to resume them.
+
 ## Versioning & Mandatory Updates
 
 To prevent data corruption and ensure compatibility with StoryGraph's unofficial API, the plugin includes a remote versioning system.
