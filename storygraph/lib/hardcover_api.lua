@@ -12,6 +12,7 @@ local htmlparser = require("htmlparser")
 
 local Book = require("storygraph/lib/book")
 local HttpResult = require("storygraph/lib/http_result")
+local MutationResult = require("storygraph/lib/mutation_result")
 local ProgressPolicy = require("storygraph/lib/progress_policy")
 local SETTING = require("storygraph/lib/constants/settings")
 local VERSION = require("storygraph_version")
@@ -158,6 +159,34 @@ local function mutationSucceeded(self, code, headers)
     self.on_error("Unauthorized")
   end
   return success
+end
+
+-- Preserve the legacy first return value; queued callers also receive a uniform
+-- outcome. A refresh can never turn an acknowledged note into another POST.
+local function finishMutation(self, operation, code, headers)
+  local outcome = MutationResult:response(code, headers, "write")
+  if outcome.category == "auth" and self.on_error then self.on_error("Unauthorized") end
+  if outcome.status ~= "confirmed" then return nil, outcome end
+  if operation.kind == "note" then
+    return { _storygraph_refresh = true }, outcome
+  end
+  local ok, state, _, read_outcome = pcall(self.findUserBook, self, operation.book_id, nil, true)
+  if read_outcome and read_outcome.category == "auth" then
+    read_outcome.status = "uncertain"
+    return nil, read_outcome
+  end
+  local confirmed, reason = MutationResult:verify(operation, ok and state or nil)
+  if confirmed then return state, outcome end
+  return nil, MutationResult:failure("uncertain", reason, "transient")
+end
+
+local function preflightFailure(self, code, headers)
+  local outcome = MutationResult:response(code, headers, "read")
+  if outcome.category == "auth" and self.on_error then self.on_error("Unauthorized") end
+  if outcome.status == "confirmed" then
+    outcome = MutationResult:failure("rejected", "invalid_page", "permanent")
+  end
+  return nil, outcome
 end
 
 -- Helper to extract authenticity token from HTML
@@ -376,10 +405,11 @@ end
 function HardcoverApi:findUserBook(book_id, user_id, is_recursion)
   if not book_id then return {} end
   local book_url = base_url .. "/books/" .. book_id
-  local code, html = self:request(book_url, "GET")
+  local code, html, headers = self:request(book_url, "GET")
   
   if code ~= 200 then
-    return {}, "Failed to fetch book"
+    local outcome = MutationResult:response(code, headers, "read")
+    return {}, "Failed to fetch book", outcome
   end
 
   local root = htmlparser.parse(html, 10000)
@@ -635,15 +665,21 @@ function HardcoverApi:updateUserBook(book_id, status_id)
     [4] = "paused",
     [5] = "did-not-finish"
   }
-  local status_str = status_map[status_id] or "currently-reading"
+  local status_str = status_map[status_id]
+  if not status_str then
+    return nil, MutationResult:failure("rejected", "invalid_operation", "permanent")
+  end
   
   local book_url = base_url .. "/books/" .. book_id
   local get_code, html, get_resp_headers = self:request(book_url, "GET")
   if get_code ~= 200 or type(html) ~= "string" then
-    mutationSucceeded(self, get_code, get_resp_headers)
-    return nil
+    return preflightFailure(self, get_code, get_resp_headers)
   end
   
+  if html:match("<form[^>]-action=[\"'][^\"']*/users/sign_in") then
+    return preflightFailure(self, 401)
+  end
+
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
@@ -658,7 +694,7 @@ function HardcoverApi:updateUserBook(book_id, status_id)
   local csrf = self:extract_csrf(html)
   
   if not csrf then
-    logger.warn("StoryGraph: Could not extract CSRF token for status update")
+    return nil, MutationResult:failure("rejected", "invalid_page", "permanent")
   else
     logger.info("StoryGraph: Extracted CSRF token (length: " .. #csrf .. ")")
   end
@@ -681,28 +717,15 @@ function HardcoverApi:updateUserBook(book_id, status_id)
     authenticity_token = csrf
   }, custom_headers)
   
-  -- If currently-reading fails, try rereading
-  if status_str == "currently-reading" and (code == 302 or code == 422) then
-    local loc = resp_headers and resp_headers["location"] or ""
-    if loc:match("/users/sign_in") or code == 422 then
-      logger.info("StoryGraph: currently-reading failed, trying rereading...")
-      update_url = base_url .. "/update-status.js?book_id=" .. book_id .. "&status=rereading"
-      code, resp, resp_headers = self:request(update_url, "POST", {
-        authenticity_token = csrf
-      }, custom_headers)
-    end
-  end
-  
   logger.info("StoryGraph: Status update response code: " .. (code or "nil"))
   if code == 302 and resp_headers and resp_headers["location"] then
     logger.info("StoryGraph: Redirected to: " .. resp_headers["location"])
   end
   
   -- Consider 2xx or 302 (redirect back to book) as potential success
-  if mutationSucceeded(self, code, resp_headers) then
-    return self:findUserBook(book_id)
-  end
-  return nil
+  return finishMutation(self, {
+    kind = "status", book_id = book_id, payload = { status_id = status_id },
+  }, code, resp_headers)
 end
 
 function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, options)
@@ -712,10 +735,13 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, o
   local book_url = base_url .. "/books/" .. book_id
   local get_code, html, get_resp_headers = self:request(book_url, "GET")
   if get_code ~= 200 or type(html) ~= "string" then
-    mutationSucceeded(self, get_code, get_resp_headers)
-    return nil
+    return preflightFailure(self, get_code, get_resp_headers)
   end
   
+  if html:match("<form[^>]-action=[\"'][^\"']*/users/sign_in") then
+    return preflightFailure(self, 401)
+  end
+
   -- Handle session refresh from GET
   local current_session = self.settings:readSetting(SETTING.SESSION_COOKIE)
   local new_cookie = get_resp_headers and get_resp_headers["set-cookie"]
@@ -730,7 +756,7 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, o
   local csrf = self:extract_csrf(html)
   
   if not csrf then
-    logger.warn("StoryGraph: Could not extract CSRF token for progress update")
+    return nil, MutationResult:failure("rejected", "invalid_page", "permanent")
   end
 
   local book_num_of_pages = html:match('name="read_status%[book_num_of_pages%]"%s+[^>]*value="([^"]+)"')
@@ -749,13 +775,16 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, o
         or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_percent%]"')
         or html:match('class="read%-status%-last%-reached%-percent"%s+[^>]*value="([^"]+)"')
     end
+    if tonumber(remote_value) == nil then
+      return nil, MutationResult:failure("rejected", "invalid_page", "permanent")
+    end
     if ProgressPolicy:shouldSkip(value, remote_value, true) then
       logger.info("StoryGraph: Queued progress is not ahead of remote progress; skipping update")
       return {
         _storygraph_skipped = true,
         last_reached_pages = update_type == "pages" and tonumber(remote_value) or nil,
         last_reached_percent = update_type ~= "pages" and tonumber(remote_value) or nil,
-      }
+      }, MutationResult:confirmed()
     end
   end
 
@@ -783,10 +812,10 @@ function HardcoverApi:updatePage(user_read_id, value, started_at, update_type, o
     ["authenticity_token"] = csrf
   }, custom_headers)
   
-  if mutationSucceeded(self, code, resp_headers) then
-    return self:findUserBook(book_id)
-  end
-  return nil
+  return finishMutation(self, {
+    kind = "progress", book_id = book_id,
+    payload = { value = value, update_type = update_type, allow_regression = not options.skip_behind },
+  }, code, resp_headers)
 end
 
 function HardcoverApi:createRead(book_id, value, started_at, update_type)
@@ -799,30 +828,34 @@ function HardcoverApi:createJournalEntry(data)
   local book_url = base_url .. "/books/" .. book_id
   local get_code, html, get_resp_headers = self:request(book_url, "GET")
   if get_code ~= 200 or type(html) ~= "string" then
-    mutationSucceeded(self, get_code, get_resp_headers)
-    return nil
+    return preflightFailure(self, get_code, get_resp_headers)
+  end
+  if html:match("<form[^>]-action=[\"'][^\"']*/users/sign_in") then
+    return preflightFailure(self, 401)
   end
   local csrf = self:extract_csrf(html)
-  
+
   if not csrf then
-    logger.warn("StoryGraph: Could not extract CSRF token for journal entry. HTML length: " .. (html and #html or 0))
-    return nil
+    return nil, MutationResult:failure("rejected", "invalid_page", "permanent")
   end
 
   -- Extract current progress values to send back (required by StoryGraph)
   local last_reached_pages = html:match('name="read_status%[last_reached_pages%]"%s+[^>]*value="([^"]+)"')
     or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_pages%]"')
     or html:match('class="read%-status%-last%-reached%-pages"%s+[^>]*value="([^"]+)"')
-    or "0"
+
   local book_num_of_pages = html:match('name="read_status%[book_num_of_pages%]"%s+[^>]*value="([^"]+)"')
     or html:match('value="([^"]+)"%s+[^>]*name="read_status%[book_num_of_pages%]"')
     or html:match('class="read%-status%-book%-num%-of%-pages"%s+[^>]*value="([^"]+)"')
-    or "0"
+
   local last_reached_percent = html:match('name="read_status%[last_reached_percent%]"%s+[^>]*value="([^"]+)"')
     or html:match('value="([^"]+)"%s+[^>]*name="read_status%[last_reached_percent%]"')
     or html:match('class="read%-status%-last%-reached%-percent"%s+[^>]*value="([^"]+)"')
-    or "0"
 
+
+  if not tonumber(last_reached_pages) or not tonumber(last_reached_percent) or not tonumber(book_num_of_pages) then
+    return nil, MutationResult:failure("rejected", "invalid_page", "permanent")
+  end
   local update_url = base_url .. "/update-progress-with-note"
 
   local date = data.date or os.date("*t")
@@ -851,10 +884,7 @@ function HardcoverApi:createJournalEntry(data)
 
   logger.info("StoryGraph: Journal entry response code: " .. (code or "nil"))
   
-  if mutationSucceeded(self, code, resp_headers) then
-    return self:findUserBook(book_id)
-  end
-  return nil
+  return finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers)
 end
 
 function HardcoverApi:removeRead(user_book_id)

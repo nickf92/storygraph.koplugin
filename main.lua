@@ -528,12 +528,35 @@ function HardcoverApp:_enqueueSyncOperation(operation, callback, options)
   return queued
 end
 
+-- Refresh is optional after an acknowledged note and cannot re-enqueue it.
+function HardcoverApp:_refreshAfterMutation(operation)
+  local session_id = self._documentSessionId
+  local function current()
+    return self.ui.document and self.ui.document.file == operation.document
+      and self._documentSessionId == session_id
+      and tostring(self.settings:getLinkedBookId()) == tostring(operation.book_id)
+  end
+  UIManager:nextTick(function()
+    if not current() or not self:isActive() then return end
+    Trapper:wrap(function()
+      local ok, state = pcall(Api.findUserBook, Api, operation.book_id, nil, true)
+      if ok and type(state) == "table" and state.id and current() then
+        self.state.book_status = state
+        self:registerHighlight()
+      end
+    end)
+  end)
+end
+
 function HardcoverApp:_onQueuedOperationSuccess(operation, result)
   local callback = self._syncQueueCallbacks[operation.id]
   self._syncQueueCallbacks[operation.id] = nil
 
   if self.ui.document and self.ui.document.file == operation.document
       and operation.session_id == self._documentSessionId then
+    if type(result) == "table" and result._storygraph_refresh then
+      self:_refreshAfterMutation(operation)
+    end
     if type(result) == "table" and result.id then
       self.state.book_status = result
     elseif type(result) == "table" and result._storygraph_skipped then

@@ -25,13 +25,14 @@ function SyncDispatcher:drainOne()
     return false, "offline"
   end
 
-  local operation = self.queue:start()
+  local operation, start_error = self.queue:start()
   if not operation then
+    if start_error then return false, start_error end
     return true, "empty"
   end
 
   self.busy = true
-  local called, success, result, reason = pcall(self.send, operation)
+  local called, success, result, reason, outcome = pcall(self.send, operation)
   if not called then
     reason = success
     success = false
@@ -40,7 +41,7 @@ function SyncDispatcher:drainOne()
     success = success == true
   end
 
-  local completed, finish_error = self.queue:finish(operation.id, success)
+  local completed, finish_error = self.queue:finish(operation.id, success, outcome)
   self.busy = false
 
   if not success and completed and finish_error == "superseded" then

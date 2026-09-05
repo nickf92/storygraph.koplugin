@@ -147,7 +147,7 @@ describe("SyncSender", function()
       api = {
         updateUserBook = function(_, book_id, status_id)
           received = { book_id, status_id }
-          return {}
+          return { status_id = status_id }
         end,
       },
     }
@@ -167,7 +167,7 @@ describe("SyncSender", function()
       api = {
         createJournalEntry = function(_, note)
           received = note
-          return {}
+          return {}, { status = "confirmed" }
         end,
       },
     }

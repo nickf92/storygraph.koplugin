@@ -1,7 +1,7 @@
 local SyncQueue = {}
 SyncQueue.__index = SyncQueue
 
-local VERSION = 1
+local VERSION = 2
 local DEFAULT_KEY = "sync_queue"
 local DEFAULT_MAX_OPERATIONS = 100
 local DEFAULT_MAX_OPERATIONS_PER_DOCUMENT = 25
@@ -70,7 +70,7 @@ local function insertionIndex(operations, candidate)
 end
 
 local function normalizedState(value)
-  if type(value) ~= "table" or value.version ~= VERSION or type(value.operations) ~= "table" then
+  if type(value) ~= "table" or (value.version ~= VERSION and value.version ~= 1) or type(value.operations) ~= "table" then
     return {
       version = VERSION,
       next_id = 1,
@@ -126,7 +126,7 @@ function SyncQueue:new(options)
       queue.load_error = tostring(value)
     end
   end
-  if type(stored) == "table" and stored.version ~= nil and stored.version ~= VERSION then
+  if type(stored) == "table" and stored.version ~= nil and stored.version ~= VERSION and stored.version ~= 1 then
     queue.load_error = "unsupported queue version"
   end
   queue.state = normalizedState(stored)
@@ -254,6 +254,9 @@ function SyncQueue:relinkDocument(document, book_id, remap)
       if self.active[operation.id] then
         return nil, "operation_active"
       end
+      if operation.kind == "note" and operation.delivery_state then
+        return nil, "note_uncertain"
+      end
       ids[operation.id] = true
     end
   end
@@ -263,6 +266,7 @@ function SyncQueue:relinkDocument(document, book_id, remap)
     for _, operation in ipairs(self.state.operations) do
       if ids[operation.id] then
         remap(operation)
+        operation.delivery_state = nil
         operation.book_id = tostring(book_id)
         if operation.kind == "note" then
           operation.payload.book_id = tostring(book_id)
@@ -305,13 +309,21 @@ function SyncQueue:start()
   end
   for _, operation in ipairs(self.state.operations) do
     if not self.active[operation.id] and not self.state.paused_documents[operation.document] then
-      self.active[operation.id] = true
-      return clone(operation)
+      local original = clone(operation)
+      local saved, err = self:_mutate(function()
+        for _, pending in ipairs(self.state.operations) do
+          if pending.id == original.id then pending.delivery_state = "in_flight" end
+        end
+        return true
+      end)
+      if not saved then return nil, err end
+      self.active[original.id] = true
+      return original
     end
   end
 end
 
-function SyncQueue:finish(operation_id, success)
+function SyncQueue:finish(operation_id, success, outcome)
   if not self.active[operation_id] then
     return false, "not_active"
   end
@@ -342,6 +354,13 @@ function SyncQueue:finish(operation_id, success)
           return true, "superseded"
         end
       end
+    end
+    if active_index then
+      return self:_mutate(function()
+        self.state.operations[active_index].delivery_state =
+          not (outcome and outcome.status == "rejected") and "uncertain" or nil
+        return false
+      end)
     end
     return false
   end

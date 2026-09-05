@@ -1,5 +1,3 @@
-local HARDCOVER = require("storygraph/lib/constants/hardcover")
-
 local SyncSender = {}
 SyncSender.__index = SyncSender
 
@@ -20,40 +18,7 @@ local function copyTable(value, seen)
   return copy
 end
 
-local function progressConfirmed(payload, result)
-  if type(result) ~= "table" then
-    return false, "remote_error"
-  end
-  if result._storygraph_skipped then
-    return true
-  end
-  if result.status_id ~= HARDCOVER.STATUS.READING then
-    if result.status_id ~= nil then
-      return false, "not_reading"
-    end
-    return false, "progress_unconfirmed"
-  end
-
-  local expected = tonumber(payload.value)
-  local update_type = payload.update_type or "percentage"
-  local actual = update_type == "pages"
-    and tonumber(result.last_reached_pages)
-    or tonumber(result.last_reached_percent or result.percent_finished)
-  if expected == nil or actual == nil then
-    return false, "progress_unconfirmed"
-  end
-
-  local confirmed
-  if payload.allow_regression == true then
-    confirmed = actual == expected
-  else
-    confirmed = actual >= expected
-  end
-  if not confirmed then
-    return false, "progress_unconfirmed"
-  end
-  return true
-end
+local MutationResult = require("storygraph/lib/mutation_result")
 
 function SyncSender:new(options)
   options = options or {}
@@ -66,34 +31,54 @@ function SyncSender:send(operation)
     return false, nil, "invalid_operation"
   end
 
+  if operation.delivery_state then
+    if operation.kind == "note" then
+      local outcome = MutationResult:failure("uncertain", "note_uncertain", "reconciliation")
+      return false, nil, outcome.reason, outcome
+    end
+    -- After a lost response or restart, observe the remote state before another
+    -- mutation. A failed refresh must never repeat an acknowledged POST blindly.
+    local ok, state, _, read_outcome = pcall(self.api.findUserBook, self.api, operation.book_id, nil, true)
+    if read_outcome and read_outcome.category == "auth" then
+      read_outcome.status = "uncertain"
+      return false, nil, read_outcome.reason, read_outcome
+    end
+    local confirmed, reason = MutationResult:verify(operation, ok and state or nil)
+    if confirmed then return true, state, nil, MutationResult:confirmed() end
+    local observed = ok and type(state) == "table" and state.id and state.status_id
+    local outcome = MutationResult:failure(observed and "rejected" or "uncertain",
+      reason, reason == "not_reading" and "permanent" or "transient")
+    return false, nil, reason, outcome
+  end
+
   local payload = operation.payload
-  local result
+  local result, outcome
   if operation.kind == "progress" then
-    result = self.api:updatePage(
+    result, outcome = self.api:updatePage(
       tostring(operation.book_id) .. "_read",
       payload.value,
       payload.started_at,
       payload.update_type,
       { skip_behind = payload.allow_regression ~= true }
     )
-    local confirmed, reason = progressConfirmed(payload, result)
-    if not confirmed then
-      return false, result, reason
-    end
   elseif operation.kind == "status" then
-    result = self.api:updateUserBook(operation.book_id, payload.status_id)
+    result, outcome = self.api:updateUserBook(operation.book_id, payload.status_id)
   elseif operation.kind == "note" then
     local note = copyTable(payload)
     note.book_id = operation.book_id
-    result = self.api:createJournalEntry(note)
+    result, outcome = self.api:createJournalEntry(note)
   else
     return false, nil, "invalid_operation"
   end
 
-  if result == nil or result == false then
-    return false, nil, "remote_error"
+  if outcome then
+    return outcome.status == "confirmed", result, outcome.reason, outcome
   end
-  return true, result
+  -- Legacy callers/test adapters must still provide observable confirmation.
+  local confirmed, reason = MutationResult:verify(operation, result)
+  if confirmed then return true, result, nil, MutationResult:confirmed() end
+  reason = result == nil and "remote_error" or reason
+  return false, result, reason, MutationResult:failure("uncertain", reason, "transient")
 end
 
 return SyncSender

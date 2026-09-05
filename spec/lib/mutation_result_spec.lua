@@ -1,0 +1,27 @@
+local Result = require("storygraph/lib/mutation_result")
+describe("Mutation outcomes", function()
+  it("classifies rejected authentication, validation, and throttling", function()
+    for _, code in ipairs({401, 403}) do
+      assert.are.equal("auth", Result:response(code, {}, "write").category)
+    end
+    assert.are.equal("auth", Result:response(303, {location="/users/sign_in"}, "write").category)
+    assert.are.equal("permanent", Result:response(422, {}, "write").category)
+    local result = Result:response(429, {["retry-after"]="120"}, "write")
+    assert.are.equal("rejected", result.status)
+    assert.are.equal("transient", result.category)
+    assert.are.equal(120, result.retry_after)
+  end)
+  it("distinguishes safe read retries from uncertain writes", function()
+    for _, code in ipairs({408, 500, 503}) do
+      assert.are.equal("rejected", Result:response(code, {}, "read").status)
+      assert.are.equal("uncertain", Result:response(code, {}, "write").status)
+    end
+    assert.are.equal("uncertain", Result:response(nil, {}, "write").status)
+    assert.are.equal("uncertain", Result:response(202, {}, "write").status)
+  end)
+  it("accepts known book redirects but not arbitrary destinations", function()
+    assert.are.equal("confirmed", Result:response(303, {location="/books/book-1"}, "write").status)
+    assert.are.equal("uncertain", Result:response(302, {}, "write").status)
+    assert.are.equal("uncertain", Result:response(302, {location="https://example.invalid/books/book-1"}, "write").status)
+  end)
+end)

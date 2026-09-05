@@ -109,8 +109,8 @@ describe("Pending operations during an edition transition", function()
   end)
 
   it("refuses to retarget an operation already being sent", function()
-    local before = queue:list()
     queue:start()
+    local before = queue:list()
     assert.is_false(app:_relinkQueuedOperations("book.epub", { book_id = "new", pages = 400 }))
     assert.are.same(before, queue:list())
   end)
@@ -202,6 +202,7 @@ describe("Pending operations during an edition transition", function()
     end
     assert.is_false(hardcover:linkBook { book_id = "new", pages = 400 })
     assert.are.equal("old", saved_book)
+    function storage:flush() end -- storage is writable again after restarting
     assert.are.equal("other.epub", Queue:new { storage = storage }:start().document)
   end)
 
@@ -232,6 +233,7 @@ describe("Pending operations during an edition transition", function()
     hardcover:showChangeEditionDialog()
     select_edition { book_id = "new", pages = 400 }
     assert.are.equal("old", saved_book)
+    function storage:flush() end -- storage is writable again after restarting
     assert.are.equal("other.epub", Queue:new { storage = storage }:start().document)
   end)
 
