@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.10 (2026-09-11)
+
+### Fixes
+
+* Preserve automatic progress updates when crossing a percentage or page threshold within the same rounded percentage. Previously, a change such as 19.9% to 20% could be discarded, leaving no queued update to send after reconnecting.
+
+### Tests
+
+* Cover offline threshold crossings with page and percentage payloads, backward navigation, progress below the next threshold, and progress behind StoryGraph.
+
 ## 0.2.9 (2026-09-05)
 
 ### Features
