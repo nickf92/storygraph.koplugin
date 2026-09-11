@@ -936,9 +936,8 @@ function HardcoverApp:pageUpdateEvent(page)
 
     if should_sync then
       local percentage = math.floor(current_percent * 100 + 0.5)
-      local last_percent = math.floor(previous_percent * 100 + 0.5)
       local remote_percent = tonumber(self.state.book_status.percent_finished) or 0
-      if percentage > last_percent and percentage >= remote_percent then
+      if current_percent > previous_percent and percentage >= remote_percent then
         if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and current_mapped_page then
           self:_handlePageUpdate(self.ui.document.file, current_mapped_page, false, nil, "pages")
         else
