@@ -14,12 +14,13 @@ describe("StoryGraph HTML and mutation contract", function()
       calls = calls + 1
       if calls == 1 then return 200, fixture(), {} end
       if method == "POST" then return 204, "", {} end
+      if calls == 2 then return nil, "baseline unavailable" end
       error("a confirmed note must not depend on a refresh")
     end
     local result, outcome = api:createJournalEntry { book_id = "book-1", entry = "Synthetic note", progress = 40 }
     assert.is_truthy(result)
     assert.are.equal("confirmed", outcome.status)
-    assert.are.equal(2, calls)
+    assert.are.equal(3, calls) -- preflight, optional journal baseline, POST
   end)
 
   it("distinguishes a POST timeout from a rejected request", function()

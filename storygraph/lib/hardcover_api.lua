@@ -13,6 +13,7 @@ local htmlparser = require("htmlparser")
 local Book = require("storygraph/lib/book")
 local HttpResult = require("storygraph/lib/http_result")
 local MutationResult = require("storygraph/lib/mutation_result")
+local JournalVerification = require("storygraph/lib/journal_verification")
 local ProgressPolicy = require("storygraph/lib/progress_policy")
 local SETTING = require("storygraph/lib/constants/settings")
 local VERSION = require("storygraph_version")
@@ -826,6 +827,22 @@ function HardcoverApi:createRead(book_id, value, started_at, update_type)
   return self:updatePage(book_id .. "_read", value, started_at, update_type)
 end
 
+-- These reads never infer non-delivery. A partial page, login, parser failure,
+-- concurrent update or mismatch leaves the original uncertain outcome intact.
+function HardcoverApi:journalSnapshot(book_id)
+  if type(book_id) ~= "string" or not book_id:match("^[%w%-]+$") then return nil end
+  local code, html = self:request(base_url .. "/journal?book_id=" .. book_id, "GET")
+  if code ~= 200 then return nil end
+  return JournalVerification:snapshot(html, book_id)
+end
+
+function HardcoverApi:verifyJournalEntry(note, before)
+  local id = JournalVerification:newEntry(before, self:journalSnapshot(note.book_id))
+  if not id then return false end
+  local code, html = self:request(base_url .. "/journal_entries/" .. id .. "/edit", "GET")
+  return code == 200 and JournalVerification:matches(html, id, note)
+end
+
 function HardcoverApi:createJournalEntry(data)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
@@ -862,6 +879,10 @@ function HardcoverApi:createJournalEntry(data)
   local update_url = base_url .. "/update-progress-with-note"
 
   local date = data.date or os.date("*t")
+  -- Take the baseline before POST: an older identical note is not proof that
+  -- this operation arrived. Failure to read the baseline must not prevent send.
+  local snapshot_ok, before = pcall(self.journalSnapshot, self, book_id)
+  if not snapshot_ok then before = nil end
   local post_data = {
     ["authenticity_token"] = csrf,
     ["progress_update_date[day]"] = date.day,
@@ -887,7 +908,19 @@ function HardcoverApi:createJournalEntry(data)
 
   logger.info("StoryGraph: Journal entry response code: " .. (code or "nil"))
   
-  return finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers, resp)
+  local result, outcome = finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers, resp)
+  if outcome.status == "uncertain" and before then
+    local ok, confirmed = pcall(self.verifyJournalEntry, self, {
+      book_id = book_id, entry = data.entry, date = date,
+      progress = data.progress or "0", progress_type = data.progress_type or "percentage",
+    }, before)
+    if ok and confirmed then
+      logger.info("StoryGraph: uncertain note confirmed by remote journal")
+      return { _storygraph_refresh = true }, MutationResult:confirmed()
+    end
+    logger.info("StoryGraph: remote journal verification inconclusive; note remains pending")
+  end
+  return result, outcome
 end
 
 function HardcoverApi:removeRead(user_book_id)

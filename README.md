@@ -65,6 +65,10 @@ Changing the linked edition remaps pending progress to your current document pos
 
 Temporary failures retry with increasing waits while connected; reconnecting or turning pages does not reset the wait. A failed document does not block independent documents. Authentication failures wait for updated credentials, while permanent failures need an explicit retry from **Pending synchronization**.
 
+Before sending a note, the plugin attempts to read the edition's journal entry IDs. If the POST result is uncertain, it immediately reads the journal again. It confirms delivery only when exactly one new entry appears and its text, date and page/percentage match the submitted note. Existing identical notes do not count as confirmation. These checks use only GET requests and never resend the note.
+
+Unrecognized or paginated journals, unavailable reads, mismatches and ambiguous results leave the note pending. Automatic verification currently applies within the same send attempt; older pending notes and attempts interrupted by a restart still require manual reconciliation. The extra baseline read also occurs on successful sends; an uncertain response can add two further reads. There are no delayed verification retries in this change.
+
 Notes with an uncertain delivery result are never resent automatically. In **Pending synchronization**, view the note and check the StoryGraph reading journal. Choose **Already present on StoryGraph** to acknowledge it, or **Not present: send again** to authorize another attempt. If StoryGraph requires a rereading session, start it on the website before retrying the pending reading-status change.
 
 
