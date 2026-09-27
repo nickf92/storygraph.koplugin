@@ -8,6 +8,28 @@ local function loadMenu()
 end
 
 describe("Uncertain-note recovery menu", function()
+  it("distinguishes scheduled verification from exhausted manual recovery", function()
+    local now=1000
+    local queue=Queue:new {now=function() return now end}
+    queue:enqueue {document="book.epub",book_id="book",kind="note",payload={entry="Synthetic"}}
+    local op=queue:start()
+    assert.is_true(queue:prepareNoteVerification(op.id, {book_id="book",before={},attempts=0,
+      date={year=2026,month=9,day=27},progress=40,progress_type="percentage"}))
+    local outcome={status="uncertain",category="reconciliation",verification_reason="entry_absent"}
+    queue:finish(op.id,false,outcome)
+    local items=loadMenu():items(queue,{})
+    assert.matches("Waiting to verify delivery", items[1].text, 1, true)
+    for _, choice in ipairs(items[1].sub_item_table) do assert.not_equals("Retry now", choice.text) end
+    for attempt=1,3 do
+      now=queue:nextAttemptAt(); op=queue:start()
+      -- At the last check, simulate a crash before recording the outcome.
+      if attempt < 3 then queue:finish(op.id,false,outcome) end
+    end
+    items=loadMenu():items(queue,{})
+    assert.matches("Check delivery",items[1].text,1,true)
+    assert.is_nil(queue:nextAttemptAt())
+  end)
+
   it("does not resend until the user explicitly confirms the duplicate risk", function()
     local queue=Queue:new()
     local op=queue:enqueue {document="book.epub",book_id="book",kind="note",payload={entry="Synthetic"}}

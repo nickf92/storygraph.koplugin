@@ -19,6 +19,7 @@ local function copyTable(value, seen)
 end
 
 local MutationResult = require("storygraph/lib/mutation_result")
+local NoteVerification = require("storygraph/lib/note_verification")
 
 function SyncSender:new(options)
   options = options or {}
@@ -26,13 +27,22 @@ function SyncSender:new(options)
   return setmetatable({ api = options.api }, self)
 end
 
-function SyncSender:send(operation)
+function SyncSender:send(operation, save_verification)
   if type(operation) ~= "table" or type(operation.payload) ~= "table" then
     return false, nil, "invalid_operation"
   end
 
   if operation.delivery_state then
     if operation.kind == "note" then
+      if NoteVerification:valid(operation.note_verification, operation.book_id)
+          and self.api.reconcileJournalEntry then
+        local note = copyTable(operation.payload)
+        local context = operation.note_verification
+        note.book_id, note.date = operation.book_id, context.date
+        note.progress, note.progress_type = context.progress, context.progress_type
+        local result, outcome = self.api:reconcileJournalEntry(note, context)
+        return outcome.status == "confirmed", result, outcome.reason, outcome
+      end
       local outcome = MutationResult:failure("uncertain", "note_uncertain", "reconciliation")
       return false, nil, outcome.reason, outcome
     end
@@ -66,7 +76,7 @@ function SyncSender:send(operation)
   elseif operation.kind == "note" then
     local note = copyTable(payload)
     note.book_id = operation.book_id
-    result, outcome = self.api:createJournalEntry(note)
+    result, outcome = self.api:createJournalEntry(note, save_verification)
   else
     return false, nil, "invalid_operation"
   end

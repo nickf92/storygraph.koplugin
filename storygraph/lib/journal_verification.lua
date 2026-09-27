@@ -71,17 +71,17 @@ function Journal:snapshot(html, book_id)
 end
 
 function Journal:newEntry(before, after)
-  if not before or not after then return nil end
+  if not before or not after then return nil, "baseline_unavailable" end
   -- Disappearing entries may indicate an incomplete page or concurrent edits.
-  for id in pairs(before) do if not after[id] then return nil end end
+  for id in pairs(before) do if not after[id] then return nil, "journal_changed" end end
   local new_id
   for id in pairs(after) do
     if not before[id] then
-      if new_id then return nil end
+      if new_id then return nil, "entry_ambiguous" end
       new_id = id
     end
   end
-  return new_id
+  return new_id, new_id and nil or "entry_absent"
 end
 
 local function value(form, name)

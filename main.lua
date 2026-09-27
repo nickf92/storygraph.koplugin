@@ -148,8 +148,8 @@ function HardcoverApp:init()
     is_connected = function()
       return not self._networkDisconnecting and NetworkManager:isConnected()
     end,
-    send = function(operation)
-      return self.sync_sender:send(operation)
+    send = function(operation, save_verification)
+      return self.sync_sender:send(operation, save_verification)
     end,
     on_success = function(operation, result)
       self:_onQueuedOperationSuccess(operation, result)

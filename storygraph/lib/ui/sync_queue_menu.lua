@@ -1,4 +1,5 @@
 local _ = require("gettext")
+local NoteVerification = require("storygraph/lib/note_verification")
 local QueueMenu = {}
 
 function QueueMenu:items(queue, actions)
@@ -11,7 +12,8 @@ function QueueMenu:items(queue, actions)
     local uncertain = operation.kind == "note" and operation.delivery_state ~= nil
     local paused = queue:isDocumentPaused(operation.document)
     local filename = operation.document:match("[^/]+$") or operation.document
-    local state = uncertain and _("Check delivery") or paused and _("Relink edition")
+    local state = uncertain and (NoteVerification:pending(operation) and operation.next_attempt_at and not operation.blocked_reason
+        and _("Waiting to verify delivery") or _("Check delivery")) or paused and _("Relink edition")
       or operation.blocked_reason and _("Needs attention")
       or operation.next_attempt_at and _("Waiting to retry") or _("Pending")
     local label = filename .. " — " .. _(operation.kind) .. ": " .. state

@@ -162,3 +162,133 @@ describe("Automatic verification after uncertain note delivery", function()
     end
   end)
 end)
+
+describe("Conservative recovery without durable verification evidence", function()
+  local function disk()
+    return { readSetting = function(self) return self.data end,
+      saveSetting = function(self, _, data) self.data = data end, flush = function() end }
+  end
+  local function dispatcher(queue, api, connected)
+    local sender = Sender:new {api=api}
+    return Dispatcher:new {queue=queue, is_connected=connected or function() return true end,
+      send=function(op) return sender:send(op) end}
+  end
+  local function enqueue(queue)
+    return queue:enqueue {kind="note", document="book.epub", book_id="book-1", payload=note()}
+  end
+
+  for label, options in pairs({
+    absent = {after=journal({"old-entry"})},
+    ambiguous = {after=journal({"old-entry", "new-entry", "another-entry"})},
+    mismatched = {edit=fixture("journal_entry"):gsub("Synthetic", "Different")},
+    unavailable = {after_code=503},
+  }) do
+    it("preserves a " .. label .. " result across restart, reconnect and credential changes", function()
+      local storage = disk()
+      local queue = Queue:new {storage=storage}
+      local added = enqueue(queue)
+      local api, calls, posts = scenario(options)
+      assert.is_false(dispatcher(queue, api):drainOne())
+      local pending = queue:list()[1]
+      assert.same(note(), pending.payload)
+      assert.equals("uncertain", pending.delivery_state)
+      assert.equals("reconciliation", pending.blocked_reason)
+      local call_count = #calls
+
+      queue = Queue:new {storage=storage, now=function() return os.time() + 86400 end}
+      local online = false
+      local worker = dispatcher(queue, api, function() return online end)
+      local ok, reason = worker:drainOne()
+      assert.is_false(ok)
+      assert.equals("offline", reason)
+      online = true
+      assert.is_true(queue:credentialsChanged())
+      local retried, retry_reason = queue:retryOperation(added.id)
+      assert.is_nil(retried)
+      assert.equals("reconciliation_required", retry_reason)
+      assert.is_nil(queue:nextAttemptAt())
+      for _ = 1, 3 do
+        ok, reason = worker:drainOne()
+        assert.is_true(ok)
+        assert.equals("empty", reason)
+      end
+      assert.equals(call_count, #calls)
+      assert.equals(1, posts())
+      assert.same(pending, queue:list()[1])
+    end)
+  end
+
+  it("holds dependent updates but lets another edition synchronize", function()
+    local queue = Queue:new {storage=disk()}
+    enqueue(queue)
+    local api, _, posts = scenario {after=journal({"old-entry", "new-entry", "another-entry"})}
+    local worker = dispatcher(queue, api)
+    assert.is_false(worker:drainOne())
+    for _, target in ipairs({ {"book.epub", "book-1"}, {"other-file.epub", "book-1"},
+        {"independent.epub", "book-2"} }) do
+      queue:enqueue {kind="progress", document=target[1], book_id=target[2],
+        payload={value=50, update_type="percentage"}}
+    end
+    local updates = {}
+    api.updatePage = function(_, id)
+      updates[#updates + 1] = id
+      return {}, {status="confirmed"}
+    end
+    assert.is_true(worker:drainOne())
+    local ok, reason = worker:drainOne()
+    assert.is_true(ok)
+    assert.equals("empty", reason)
+    assert.same({"book-2_read"}, updates)
+    assert.equals(3, queue:count())
+    assert.equals(1, posts())
+  end)
+
+  it("requires an explicit resolution to remove or resend a pending note", function()
+    for _, delivered in ipairs({true, false}) do
+      local storage = disk()
+      local queue = Queue:new {storage=storage}
+      local added = enqueue(queue)
+      local api, calls, posts = scenario {after=journal({"old-entry"})}
+      assert.is_false(dispatcher(queue, api):drainOne())
+      queue = Queue:new {storage=storage}
+      local count = #calls
+      assert.is_nil(queue:resolveNote(added.id, nil))
+      assert.equals(1, queue:count())
+      assert.is_true(queue:resolveNote(added.id, delivered))
+      if delivered then
+        assert.equals(0, queue:count())
+        assert.equals(count, #calls)
+      else
+        assert.equals(1, queue:count())
+        assert.same(note(), queue:list()[1].payload)
+        dispatcher(queue, api):drainOne()
+      end
+      assert.equals(delivered and 1 or 2, posts())
+    end
+  end)
+
+  it("does not resend a verified note when persisting its removal fails", function()
+    local storage = disk()
+    local queue = Queue:new {storage=storage}
+    enqueue(queue)
+    local api, calls, posts = scenario()
+    local verify = api.verifyJournalEntry
+    api.verifyJournalEntry = function(self, ...)
+      local confirmed = verify(self, ...)
+      assert.is_true(confirmed)
+      storage.flush = function() error("synthetic disk failure") end
+      return confirmed
+    end
+    local ok, reason = dispatcher(queue, api):drainOne()
+    assert.is_false(ok)
+    assert.equals("persist_failed", reason)
+    storage.flush = function() end
+    queue = Queue:new {storage=storage}
+    local count = #calls
+    dispatcher(queue, api):drainOne()
+    assert.equals(1, queue:count())
+    assert.is_truthy(queue:list()[1].delivery_state)
+    assert.equals(count, #calls)
+    assert.equals(1, posts())
+  end)
+end)

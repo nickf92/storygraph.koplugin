@@ -32,7 +32,9 @@ function SyncDispatcher:drainOne()
   end
 
   self.busy = true
-  local called, success, result, reason, outcome = pcall(self.send, operation)
+  local called, success, result, reason, outcome = pcall(self.send, operation, function(context)
+    return self.queue:prepareNoteVerification(operation.id, context)
+  end)
   if not called then
     reason = "send_exception"
     success = false

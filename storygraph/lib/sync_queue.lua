@@ -1,4 +1,5 @@
 local RetryPolicy = require("storygraph/lib/retry_policy")
+local NoteVerification = require("storygraph/lib/note_verification")
 
 local SyncQueue = {}
 SyncQueue.__index = SyncQueue
@@ -330,7 +331,8 @@ function SyncQueue:_candidates()
     documents[operation.document], books[operation.book_id] = true, true
     if first and not self.state.paused_documents[operation.document]
         and not operation.blocked_reason
-        and not (operation.kind == "note" and operation.delivery_state) then
+        and (not (operation.kind == "note" and operation.delivery_state)
+          or NoteVerification:pending(operation)) then
       candidates[#candidates + 1] = operation
     end
   end
@@ -411,7 +413,31 @@ function SyncQueue:resolveNote(id, delivered)
           pending.next_attempt_at = nil
           pending.attempt_count = nil
           pending.last_error = nil
+          pending.note_verification = nil
+          pending.verification_reason = nil
         end
+        return true
+      end)
+    end
+  end
+  return nil, "not_found"
+end
+
+-- Called after reading the baseline and before sending the note. If this write
+-- fails, the caller must not POST. Old notes without evidence stay manual-only.
+function SyncQueue:prepareNoteVerification(id, context)
+  if not self.active[id] then return nil, "not_active" end
+  for index, operation in ipairs(self.state.operations) do
+    if operation.id == id then
+      if operation.kind ~= "note" or operation.note_verification ~= nil
+          or not NoteVerification:valid(context, operation.book_id)
+          or context.attempts ~= 0 then return nil, "invalid_verification" end
+      local projected = clone(self.state)
+      projected.operations[index].note_verification = clone(context)
+      if estimateSize(projected) > self.max_bytes then return nil, "queue_full" end
+      return self:_mutate(function()
+        self.state.operations[index].note_verification = clone(context)
+        self.state.operations[index].next_attempt_at = self.now() + 60
         return true
       end)
     end
@@ -426,7 +452,15 @@ function SyncQueue:start()
       local original = clone(operation)
       local saved, err = self:_mutate(function()
         for _, pending in ipairs(self.state.operations) do
-          if pending.id == original.id then pending.delivery_state = "in_flight" end
+          if pending.id == original.id then
+            if original.kind == "note" and original.delivery_state then
+              pending.note_verification.attempts = pending.note_verification.attempts + 1
+              original.note_verification = clone(pending.note_verification)
+              -- Consume the check and defer the next one before yielding to I/O.
+              pending.next_attempt_at = self.now() + 60 * 2 ^ pending.note_verification.attempts
+            end
+            pending.delivery_state = "in_flight"
+          end
         end
         return true
       end)
@@ -489,6 +523,11 @@ function SyncQueue:finish(operation_id, success, outcome)
         pending.last_error = plan.last_error
         pending.next_attempt_at = plan.next_attempt_at
         pending.blocked_reason = plan.blocked_reason
+        if pending.kind == "note" then
+          pending.verification_reason = outcome.verification_reason
+            and NoteVerification:reason(outcome.verification_reason) or nil
+          if outcome.status ~= "uncertain" then pending.note_verification = nil end
+        end
         if outcome.category == "auth" then self.state.auth_blocked = true end
         return false
       end)

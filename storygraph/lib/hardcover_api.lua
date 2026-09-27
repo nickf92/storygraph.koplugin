@@ -14,6 +14,7 @@ local Book = require("storygraph/lib/book")
 local HttpResult = require("storygraph/lib/http_result")
 local MutationResult = require("storygraph/lib/mutation_result")
 local JournalVerification = require("storygraph/lib/journal_verification")
+local NoteVerification = require("storygraph/lib/note_verification")
 local ProgressPolicy = require("storygraph/lib/progress_policy")
 local SETTING = require("storygraph/lib/constants/settings")
 local VERSION = require("storygraph_version")
@@ -829,21 +830,64 @@ end
 
 -- These reads never infer non-delivery. A partial page, login, parser failure,
 -- concurrent update or mismatch leaves the original uncertain outcome intact.
+local function journalRead(self, url, phase)
+  local code, html, headers = self:request(url, "GET")
+  logger.info("StoryGraph: journal read", phase, "http=" .. tostring(tonumber(code) or "unavailable"),
+    "redirect=" .. NoteVerification:redirect(headers))
+  if code == 401 or code == 403 or NoteVerification:redirect(headers) == "/users/sign_in"
+      or (type(html) == "string" and html:match("<form[^>]-action=[\"'][^\"']*/users/sign_in")) then
+    return nil, "unauthorized"
+  end
+  if code ~= 200 then
+    return nil, phase == "index" and "journal_unavailable" or "entry_unavailable",
+      type(headers) == "table" and tonumber(headers["retry-after"]) or nil
+  end
+  return html
+end
+
 function HardcoverApi:journalSnapshot(book_id)
-  if type(book_id) ~= "string" or not book_id:match("^[%w%-]+$") then return nil end
-  local code, html = self:request(base_url .. "/journal?book_id=" .. book_id, "GET")
-  if code ~= 200 then return nil end
-  return JournalVerification:snapshot(html, book_id)
+  if type(book_id) ~= "string" or not book_id:match("^[%w%-]+$") then return nil, "journal_unrecognized" end
+  local html, reason, retry_after = journalRead(self, base_url .. "/journal?book_id=" .. book_id, "index")
+  if not html then return nil, reason, retry_after end
+  local snapshot = JournalVerification:snapshot(html, book_id)
+  return snapshot, not snapshot and "journal_unrecognized" or nil
 end
 
 function HardcoverApi:verifyJournalEntry(note, before)
-  local id = JournalVerification:newEntry(before, self:journalSnapshot(note.book_id))
-  if not id then return false end
-  local code, html = self:request(base_url .. "/journal_entries/" .. id .. "/edit", "GET")
-  return code == 200 and JournalVerification:matches(html, id, note)
+  local after, reason, retry_after = self:journalSnapshot(note.book_id)
+  if not after then return false, reason, retry_after end
+  local id
+  id, reason = JournalVerification:newEntry(before, after)
+  if not id then return false, reason end
+  local html
+  html, reason, retry_after = journalRead(self, base_url .. "/journal_entries/" .. id .. "/edit", "entry")
+  if not html then return false, reason, retry_after end
+  if JournalVerification:matches(html, id, note) then return true, "confirmed" end
+  return false, "entry_mismatch"
 end
 
-function HardcoverApi:createJournalEntry(data)
+function HardcoverApi:reconcileJournalEntry(note, context)
+  if not NoteVerification:valid(context, note.book_id) then
+    local outcome = MutationResult:failure("uncertain", "note_uncertain", "reconciliation")
+    outcome.verification_reason = "baseline_unavailable"
+    return nil, outcome
+  end
+  local ok, confirmed, reason, retry_after = pcall(self.verifyJournalEntry, self, note, context.before)
+  reason = ok and NoteVerification:reason(reason) or "verification_exception"
+  if ok and confirmed then reason = "confirmed" end
+  logger.info("StoryGraph: note verification", "check=" .. context.attempts .. "/" .. NoteVerification.max_attempts,
+    "result=" .. reason)
+  if reason == "confirmed" then
+    return { _storygraph_refresh = true }, MutationResult:confirmed()
+  end
+  local outcome = MutationResult:failure("uncertain", "note_uncertain",
+    reason == "unauthorized" and "auth" or "reconciliation")
+  outcome.verification_reason = reason
+  outcome.retry_after = retry_after
+  return nil, outcome
+end
+
+function HardcoverApi:createJournalEntry(data, save_verification)
   local book_id = data.book_id
   local book_url = base_url .. "/books/" .. book_id
   local get_code, html, get_resp_headers = self:request(book_url, "GET")
@@ -881,8 +925,20 @@ function HardcoverApi:createJournalEntry(data)
   local date = data.date or os.date("*t")
   -- Take the baseline before POST: an older identical note is not proof that
   -- this operation arrived. Failure to read the baseline must not prevent send.
-  local snapshot_ok, before = pcall(self.journalSnapshot, self, book_id)
-  if not snapshot_ok then before = nil end
+  local snapshot_ok, before, snapshot_reason = pcall(self.journalSnapshot, self, book_id)
+  if not snapshot_ok then before, snapshot_reason = nil, "verification_exception" end
+  if snapshot_reason == "unauthorized" then return preflightFailure(self, 401) end
+  local context = {
+    book_id = book_id, before = before, date = date, attempts = 0,
+    progress = data.progress or "0", progress_type = data.progress_type or "percentage",
+  }
+  if before and save_verification then
+    local ok, saved = pcall(save_verification, context)
+    if not ok or not saved then
+      logger.warn("StoryGraph: note not sent; verification evidence could not be persisted")
+      return nil, MutationResult:failure("rejected", "verification_storage_failed", "permanent")
+    end
+  end
   local post_data = {
     ["authenticity_token"] = csrf,
     ["progress_update_date[day]"] = date.day,
@@ -906,19 +962,20 @@ function HardcoverApi:createJournalEntry(data)
     ["Accept"] = "text/vnd.turbo-stream.html, text/html, application/xhtml+xml"
   })
 
-  logger.info("StoryGraph: Journal entry response code: " .. (code or "nil"))
+  logger.info("StoryGraph: Journal entry response code: " .. tostring(tonumber(code) or "unavailable"),
+    "redirect=" .. NoteVerification:redirect(resp_headers))
   
   local result, outcome = finishMutation(self, { kind = "note", book_id = book_id }, code, resp_headers, resp)
+  logger.info("StoryGraph: note delivery", "result=" .. outcome.status,
+    "reason=" .. (outcome.reason or "acknowledged"))
   if outcome.status == "uncertain" and before then
-    local ok, confirmed = pcall(self.verifyJournalEntry, self, {
+    return self:reconcileJournalEntry({
       book_id = book_id, entry = data.entry, date = date,
-      progress = data.progress or "0", progress_type = data.progress_type or "percentage",
-    }, before)
-    if ok and confirmed then
-      logger.info("StoryGraph: uncertain note confirmed by remote journal")
-      return { _storygraph_refresh = true }, MutationResult:confirmed()
-    end
-    logger.info("StoryGraph: remote journal verification inconclusive; note remains pending")
+      progress = context.progress, progress_type = context.progress_type,
+    }, context)
+  elseif outcome.status == "uncertain" then
+    outcome.verification_reason = NoteVerification:reason(snapshot_reason or "baseline_unavailable")
+    logger.info("StoryGraph: note verification unavailable", "result=" .. outcome.verification_reason)
   end
   return result, outcome
 end

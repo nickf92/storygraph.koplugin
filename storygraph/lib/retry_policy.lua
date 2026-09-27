@@ -1,4 +1,5 @@
 local Retry = {}
+local NoteVerification = require("storygraph/lib/note_verification")
 
 function Retry:plan(operation, outcome, now, random, base, maximum)
   local attempts = (tonumber(operation.attempt_count) or 0) + 1
@@ -6,6 +7,14 @@ function Retry:plan(operation, outcome, now, random, base, maximum)
   local category = outcome.category or "transient"
   if operation.kind == "note" and outcome.status == "uncertain" and category ~= "auth" then
     category, reason = "reconciliation", "note_uncertain"
+    if NoteVerification:pending(operation)
+        and NoteVerification:retryable(NoteVerification:reason(outcome.verification_reason)) then
+      return {
+        attempt_count = attempts, last_error = reason,
+        next_attempt_at = now + math.max(60 * 2 ^ operation.note_verification.attempts,
+          tonumber(outcome.retry_after) or 0),
+      }
+    end
   elseif reason == "not_reading" then
     category = "permanent"
   end

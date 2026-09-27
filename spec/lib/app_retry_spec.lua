@@ -86,4 +86,41 @@ describe("Application retry lifecycle", function()
     assert.are.equal(1, notifications)
   end)
 
+  it("schedules GET-only note checks through suspend, resume and reconnect", function()
+    queue:removeWhere(function() return true end)
+    queue:enqueue {document="note.epub", book_id="book-1", kind="note", payload={entry="Synthetic"}}
+    local posts, checks = 0, 0
+    app.sync_dispatcher.send = function(op, save)
+      if op.delivery_state then
+        checks=checks+1
+      else
+        posts=posts+1
+        assert.is_true(save {book_id="book-1", before={}, date={year=2026,month=9,day=27},
+          progress=40, progress_type="percentage", attempts=0})
+      end
+      return false, nil, "note_uncertain", {status="uncertain",category="reconciliation",
+        reason="note_uncertain",verification_reason="entry_absent"}
+    end
+    app:_drainSyncQueueNow()
+    assert.equals(60, timers[app._syncQueueRetryJob])
+    app:onSuspend()
+    assert.is_nil(app._syncQueueRetryJob)
+    now=1030
+    app:onResume(); ticks[#ticks]()
+    assert.equals(30, timers[app._syncQueueRetryJob])
+    assert.equals(0, checks)
+    now=1060; app._syncQueueRetryJob(); ticks[#ticks]()
+    assert.equals(1, checks)
+    assert.equals(120, timers[app._syncQueueRetryJob])
+    connected=false; app:onNetworkDisconnecting()
+    assert.is_nil(app._syncQueueRetryJob)
+    now=1200
+    assert.is_false(app:_requestSyncQueueFlush())
+    connected=true; app._networkDisconnecting=false
+    assert.is_true(app:_requestSyncQueueFlush()); ticks[#ticks]()
+    assert.equals(2, checks)
+    assert.equals(1, posts)
+    assert.equals(240, timers[app._syncQueueRetryJob])
+  end)
+
 end)

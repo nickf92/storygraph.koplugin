@@ -11,6 +11,9 @@ Coverage includes:
 - Persisted in-flight markers and queue reconstruction after a lost response or a failed local write.
 - Read-only reconciliation of uncertain progress before another mutation.
 - Immediate read-only verification of uncertain notes using a pre-POST journal ID baseline, one new remote ID, and exact note/date/progress fields. Tests cover ambiguous/older entries, wrong editions, partial journals, login pages, read failures, Unicode and durable queue removal only after confirmation.
+- End-to-end queue recovery without durable verification evidence: absent, ambiguous, mismatched or unavailable results preserve the uncertain note across restart, reconnect, credential changes and generic retry without additional requests. Dependent updates stay queued while unrelated editions can synchronize. Only explicit manual resolution removes or authorizes resending these notes; a failure to persist an automatically verified delivery also cannot trigger a duplicate POST.
+- Durable pre-POST journal evidence and a budget of three deferred GET-only checks: delayed visibility, persisted deadlines, offline/reconnect/suspend behavior, authentication recovery, Retry-After, terminal ambiguity, storage capacity/failures, interrupted checks and explicit resend clearing the old baseline.
+- Diagnostic redaction of note content, arbitrary exception strings, redirect identifiers, query parameters and fragments. Queue UI distinguishes scheduled checks from exhausted/manual-only delivery recovery.
 - Exponential retry delays, server-requested waits, coalescing during backoff and unrelated documents making progress without reordering dependent operations.
 - Suspended/authenticated/disabled application states and cancellation of retry timers.
 - Explicit user confirmation before resending uncertain notes.
@@ -19,7 +22,9 @@ Coverage includes:
 
 The queue migrates schema v1 to v2 on persistence. Schema v2 records in-flight delivery, retry metadata and authentication suspension. Releases that only support v1 refuse to overwrite a v2 queue.
 
-The journal fixtures use synthetic data and field names/structure observed through read-only StoryGraph requests on 2026-09-27. The parser was also checked locally against a real journal and note form without copying their private contents into the repository. All 11 journal verification tests additionally passed using the htmlparser files from the connected Kobo. No live note was created, edited or resent for this validation. This does not replace an end-to-end device test of an uncertain POST response. The current verification baseline is held only during the send call; interrupted attempts and previously blocked notes retain manual recovery.
+The journal fixtures use synthetic data and field names/structure observed through read-only StoryGraph requests on 2026-09-27. The parser was also checked locally against a real journal and note form without copying their private contents into the repository. No live note was created, edited or resent for this validation. This does not replace an end-to-end device test of an uncertain POST response. Previously blocked notes without durable evidence retain manual recovery. The additional evidence fields are backward compatible with schema v2: an older plugin still treats an uncertain note as manual-only.
+
+The full 229-test suite passed both with the pinned parser and with the connected Kobo's `common/htmlparser.lua` explicitly loaded before Busted. To repeat the latter check, prepend the device's `common/?.lua` path and preload `htmlparser` in the runtime's Lua interpreter before executing Busted's Lua entrypoint. Setting `LUA_PATH` alone is insufficient because the generated LuaRocks Busted wrapper prepends its installed module paths.
 
 ## Device smoke test
 
