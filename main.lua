@@ -211,7 +211,9 @@ function HardcoverApp:init()
     on_status = function(status, details)
       local pending = self.sync_queue:count()
       local consumer = details.consumer or "background_sync"
-      if status == "trying_wifi" then
+      if status == "callback_failed" then
+        logger.warn("StoryGraph: automatic Wi-Fi consumer failed", consumer)
+      elseif status == "trying_wifi" then
         logger.info(("StoryGraph: automatic wifi attempt started; consumer=%s, pending=%d, cooldown=%ds")
           :format(consumer, pending, details.cooldown_seconds))
       elseif status == "wifi_connected" then

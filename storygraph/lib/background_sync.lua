@@ -139,7 +139,8 @@ function BackgroundSync:withAutomaticWifi(consumer, callback)
           reason = failure_reason,
         })
       end
-      target_callback(wifi_started == true, connected)
+      local ok = pcall(target_callback, wifi_started == true, connected)
+      if not ok then self:_report("callback_failed", {consumer=target_consumer}) end
     end
 
     notify(consumer, callback)

@@ -170,6 +170,24 @@ describe("BackgroundSync", function()
     assert.are.equal(1, state.drains)
   end)
 
+  it("continues shared Wi-Fi consumers after one raises an error", function()
+    local sync, state, finish_wifi=build {defer_wifi=true}
+    sync:withAutomaticWifi("read_cache",function() error("private synthetic failure") end)
+    sync:request()
+    state.connected=true
+    assert.has_no.errors(finish_wifi)
+    assert.equals(1,state.drains)
+    assert.is_false(sync:isWifiAttemptPending())
+    local failures=0
+    for _, event in ipairs(state.statuses) do
+      if event.status=="callback_failed" then
+        failures=failures+1
+        assert.same({consumer="read_cache"},event.details)
+      end
+    end
+    assert.equals(1,failures)
+  end)
+
   it("recovers after an automatic wifi attempt times out", function()
     local sync, state, _, fail_wifi = build { defer_wifi = true }
 

@@ -59,10 +59,17 @@ function AutoWifi:withWifi(callback, failure_callback)
     G_reader_settings:saveSetting("wifi_was_on", original_on)
 
     if connected then
-      callback(true)
+      local ok = pcall(callback, true)
       self:wifiDisableSilent()
+      if not ok then logger.warn("StoryGraph: temporary Wi-Fi callback failed; cleanup completed") end
     elseif failure_callback then
-      failure_callback("connectivity_timeout")
+      local ok = pcall(failure_callback, "connectivity_timeout")
+      -- KOReader normally shuts the radio down on timeout. Clean up if it is
+      -- still on, including when the failure handler raises an exception.
+      if NetworkMgr:isWifiOn() then self:wifiDisableSilent() end
+      if not ok then logger.warn("StoryGraph: temporary Wi-Fi failure callback failed") end
+    elseif NetworkMgr:isWifiOn() then
+      self:wifiDisableSilent()
     end
   end
 

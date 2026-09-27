@@ -123,4 +123,39 @@ describe("AutoWifi", function()
     assert.are.equal(1, successes)
     assert.are.equal(0, failures)
   end)
+
+  it("shuts down owned Wi-Fi even if the successful callback throws", function()
+    local wifi=newWifi()
+    wifi:withWifi(function() error("synthetic failure") end)
+    assert.has_no.errors(connectivity_callback)
+    assert.equals(1,turn_off_calls)
+    assert.is_false(wifi.connection_pending)
+    connectivity_callback(); timeout_job()
+    assert.equals(1,turn_off_calls)
+  end)
+
+  it("cleans up a still-enabled radio after a failing timeout handler", function()
+    local wifi=newWifi()
+    wifi:withWifi(function() error("unexpected success") end, function() error("synthetic failure") end)
+    package.loaded["ui/network/manager"].isWifiOn=function() return true end
+    assert.has_no.errors(timeout_job)
+    assert.equals(1,turn_off_calls)
+    connectivity_callback()
+    assert.equals(1,turn_off_calls)
+  end)
+
+  it("does not turn off an already available connection when its callback fails", function()
+    package.loaded["ui/network/manager"].isWifiOn=function() return true end
+    assert.has_error(function() newWifi():withWifi(function() error("synthetic failure") end) end)
+    assert.equals(0,turn_off_calls)
+  end)
+
+  it("does not log private callback error contents", function()
+    local warnings={}
+    package.loaded.logger.warn=function(text) warnings[#warnings+1]=text end
+    newWifi():withWifi(function() error("PRIVATE credential or note") end)
+    connectivity_callback()
+    assert.equals(1,#warnings)
+    assert.is_nil(warnings[1]:find("PRIVATE",1,true))
+  end)
 end)
