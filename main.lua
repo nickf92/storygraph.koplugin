@@ -524,7 +524,9 @@ function HardcoverApp:_enqueueSyncOperation(operation, callback, options)
   self.page_update_pending = self.ui.document
     and self.sync_queue:hasPending(self.ui.document.file, "progress")
     or false
-  if options.background_sync then
+  if options.defer_flush then
+    -- The NetworkConnected coordinator will flush after capturing progress.
+  elseif options.background_sync then
     self.background_sync:request()
   else
     self:_requestSyncQueueFlush()
@@ -811,7 +813,7 @@ function HardcoverApp:onSettingsChanged(field, change, original_value)
   end
 end
 
-function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type)
+function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, update_type, options)
   update_type = update_type or "percentage"
 
   if self._editionTransitionInProgress then
@@ -868,6 +870,7 @@ function HardcoverApp:_handlePageUpdate(filename, value, immediate, callback, up
     },
   }, callback, {
     background_sync = immediate ~= true,
+    defer_flush = options and options.defer_flush,
   })
 end
 
@@ -953,7 +956,7 @@ end
 function HardcoverApp:onPosUpdate(_, page)
   self.state.latest_page = page
   if self.state.process_page_turns then
-    self.state.progress_dirty = page ~= self.state.page
+    self.state.progress_dirty = self.state.progress_dirty or page ~= self.state.page
     self:pageUpdateEvent(page)
   end
 end
@@ -1141,9 +1144,58 @@ function HardcoverApp:onNetworkDisconnecting()
   end
 end
 
+-- Capture throttled/sub-threshold progress while a connection is already
+-- available. Queue coalescing preserves retry deadlines; this never enables Wi-Fi.
+function HardcoverApp:_captureConnectedProgress()
+  if not NetworkManager:isConnected() or not self:isActive() or self._syncQueueSuspended
+      or self._editionTransitionInProgress or not self.ui.document
+      or not (self.state.progress_dirty or self.page_update_pending) then return end
+  local filename = self.ui.document.file
+  if not self:syncFileUpdates(filename) or self.sync_queue:isDocumentPaused(filename) then return end
+  local page = tonumber(self.state.latest_page or self.state.page)
+  if not page or page <= 0 then return end
+  local remote_pages = self.settings:pages()
+  local fraction, mapped = self.page_mapper:getRemotePagePercent(page, self.ui.document:getPageCount(), remote_pages)
+  if not tonumber(fraction) then return end
+  local value, update_type = math.floor(fraction * 100 + 0.5), "percentage"
+  if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 and tonumber(mapped) then
+    value, update_type = tonumber(mapped), "pages"
+  end
+  local book_id = self.settings:readBookSetting(filename, "book_id")
+  local already_queued = false
+  for _, operation in ipairs(self.sync_queue:list()) do
+    if operation.document == filename and operation.kind == "progress" then
+      -- Do not replace an explicit user-authorized regression with an automatic update.
+      if operation.payload.allow_regression == true then return end
+      already_queued = tostring(operation.book_id) == tostring(book_id)
+          and operation.payload.update_type == update_type and tonumber(operation.payload.value) == value
+    end
+  end
+  local remote = self.state.book_status or {}
+  local observed = update_type == "pages" and tonumber(remote.last_reached_pages)
+    or update_type == "percentage" and tonumber(remote.percent_finished)
+  local saved = already_queued or (tostring(remote.id) == tostring(book_id) and observed == value
+    and not self.sync_queue:hasPending(filename, "progress"))
+  if not saved then
+    saved = self:_handlePageUpdate(filename, value, false, nil, update_type, {defer_flush=true})
+  end
+  if saved then
+    -- Cancel only buffered progress, preserving end-of-book/status work.
+    if self._cancelPageUpdate then self:_cancelPageUpdate() end
+    if self._cancelPageUpdateEvent then self:_cancelPageUpdateEvent() end
+    self.state.progress_dirty = false
+    self.page_update_pending = self.sync_queue:hasPending(filename, "progress")
+  end
+end
+
 function HardcoverApp:onNetworkConnected()
   self._networkDisconnecting = false
+  self:_captureConnectedProgress()
   local pending = self.sync_queue:count()
+  if pending > 0 and NetworkManager:isConnected() and self.background_sync:isWifiAttemptPending() then
+    -- Join the owned temporary session, so the drain completes before radio cleanup.
+    self.background_sync:request()
+  end
   if pending > 0 and not self.background_sync:isWifiAttemptPending() then
     logger.info(("StoryGraph: network connected; requesting normal queue flush, pending=%d"):format(pending))
   end
