@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.11 (2026-09-27)
+
+### Features
+
+* Verify uncertain note delivery against the edition's journal using a pre-send ID baseline and exact text, date and progress matching. Existing identical notes do not count as confirmation.
+* Persist verification evidence before sending and perform at most three deferred, read-only checks with increasing delays. Preserve deadlines and attempt limits across restarts, respect connectivity/suspension and server retry delays, and never automatically resend an uncertain note.
+* Distinguish pending verification from manual recovery in the queue menu. Add safe diagnostics with reasons, HTTP statuses and anonymized redirect routes; omit note text, credentials and URL parameters.
+* Capture the latest changed progress on an existing Wi-Fi connection, even below the tracking threshold or before the tracking timer fires. Reuse the existing queue without activating Wi-Fi or overriding retry delays and explicit regressions.
+
+### Fixes
+
+* Clean up temporarily enabled Wi-Fi even when a callback fails. Continue other consumers of a shared connection after a callback exception; leave pre-existing connections enabled.
+* Preserve dirty progress across repeated position notifications and cancel buffered progress only after it is safely queued or already represented.
+
+### Compatibility and validation
+
+* Keep API version 1 and queue schema v2. Older uncertain notes without saved verification evidence still require manual recovery.
+* Pass 245 automated tests with the pinned parser and the connected Kobo's parser, plus Lua syntax checks. Device battery measurements and live mutation smoke tests remain separate manual validation.
+
 ## 0.2.10 (2026-09-11)
 
 ### Fixes

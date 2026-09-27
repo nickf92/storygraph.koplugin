@@ -16,6 +16,8 @@ Coverage includes:
 - Diagnostic redaction of note content, arbitrary exception strings, redirect identifiers, query parameters and fragments. Queue UI distinguishes scheduled checks from exhausted/manual-only delivery recovery.
 - Exponential retry delays, server-requested waits, coalescing during backoff and unrelated documents making progress without reordering dependent operations.
 - Suspended/authenticated/disabled application states and cancellation of retry timers.
+- Wi-Fi callback failures still clean up the temporarily enabled radio, without disabling a connection that was already on. Shared consumers continue after another consumer fails, without logging private exception contents.
+- Connection-time capture of sub-threshold/throttled progress, queue coalescing with preserved retry deadlines, duplicate events, manual regression preservation, failed persistence, percentage/page modes and participation in shared temporary Wi-Fi sessions.
 - Explicit user confirmation before resending uncertain notes.
 - Edition remapping and legacy queue migration.
 - Syntax checks for the repository's unignored Lua files.
@@ -24,7 +26,7 @@ The queue migrates schema v1 to v2 on persistence. Schema v2 records in-flight d
 
 The journal fixtures use synthetic data and field names/structure observed through read-only StoryGraph requests on 2026-09-27. The parser was also checked locally against a real journal and note form without copying their private contents into the repository. No live note was created, edited or resent for this validation. This does not replace an end-to-end device test of an uncertain POST response. Previously blocked notes without durable evidence retain manual recovery. The additional evidence fields are backward compatible with schema v2: an older plugin still treats an uncertain note as manual-only.
 
-The full 229-test suite passed both with the pinned parser and with the connected Kobo's `common/htmlparser.lua` explicitly loaded before Busted. To repeat the latter check, prepend the device's `common/?.lua` path and preload `htmlparser` in the runtime's Lua interpreter before executing Busted's Lua entrypoint. Setting `LUA_PATH` alone is insufficient because the generated LuaRocks Busted wrapper prepends its installed module paths.
+The full 245-test suite passed both with the pinned parser and with the connected Kobo's `common/htmlparser.lua` explicitly loaded before Busted. To repeat the latter check, prepend the device's `common/?.lua` path and preload `htmlparser` in the runtime's Lua interpreter before executing Busted's Lua entrypoint. Setting `LUA_PATH` alone is insufficient because the generated LuaRocks Busted wrapper prepends its installed module paths. Battery consumption has not been measured on-device; headless tests establish request and cleanup behavior, not energy savings.
 
 ## Device smoke test
 

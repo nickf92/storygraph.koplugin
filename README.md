@@ -56,7 +56,7 @@ When enabled, the plugin will periodically sync your progress to StoryGraph:
 
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Automatically link by ISBN/Title**: Attempt to find matching books on StoryGraph automatically when opening a new document.
-- **Enable wifi on demand**: Briefly enable wifi for background syncs to preserve battery life.
+- **Enable wifi on demand**: Allow the plugin to turn Wi-Fi on temporarily for automatic work. Leave this disabled to synchronize only when a connection is already available. Temporary Wi-Fi is cleaned up even if a sync callback fails; connections that were already on are left on.
 - **Confirm changes**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
 Pending offline operations are stored in `storygraphsync_queue.lua` in the KOReader settings directory. The file may temporarily contain note text; each pending entry is removed after StoryGraph confirms its update.
@@ -64,6 +64,8 @@ Pending offline operations are stored in `storygraphsync_queue.lua` in the KORea
 Changing the linked edition remaps pending progress to your current document position and pending notes to their original positions. If an edition change is interrupted, that document's queued updates remain paused, including after restarting KOReader. Retry linking the intended edition to resume them.
 
 Temporary failures retry with increasing waits while connected; reconnecting or turning pages does not reset the wait. A failed document does not block independent documents. Authentication failures wait for updated credentials, while permanent failures need an explicit retry from **Pending synchronization**.
+
+On each connection, automatic synchronization also captures the latest changed reading position, including progress waiting for the tracking timer or below the next page/percentage threshold. It consolidates automatic progress in the existing queue, preserves retry deadlines and explicitly authorized regressions, and does not enable Wi-Fi. Equivalent queued or already observed progress is not added again. Paused editions, disabled synchronization and suspension remain respected. This behavior is automatic; there is no separate connection-sync setting in this release.
 
 Before sending a note, the plugin attempts to read the edition's journal entry IDs. If the POST result is uncertain, it immediately reads the journal again. It confirms delivery only when exactly one new entry appears and its text, date and page/percentage match the submitted note. Existing identical notes do not count as confirmation. These checks use only GET requests and never resend the note.
 
