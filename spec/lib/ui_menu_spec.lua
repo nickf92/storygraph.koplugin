@@ -19,7 +19,7 @@ describe("Redesigned StoryGraph menus", function()
         broadcastEvent=function(_,o) events[#events+1]=o end},
       ["ui/event"]={new=function(_,name) return name end},
       ["ui/widget/infomessage"]=widget,["ui/widget/spinwidget"]=widget,
-      ["storygraph/lib/ui/action_menu"]=widget,
+      ["storygraph/lib/ui/action_menu"]=widget,["storygraph/lib/ui/home_dialog"]=widget,
       device={hasWifiRestore=function() return true end},
     })
     menu=Menu:new {enabled=true, ui={document={file="book.epub",getPageCount=function() return 100 end},
@@ -28,6 +28,7 @@ describe("Redesigned StoryGraph menus", function()
         getLinkedBookId=function() return "id" end, getLinkedEditionId=function() return "edition" end,
         getLinkedEditionFormat=function() return "Paperback" end,syncEnabled=function() return tracking end,
         setSync=function(_,value) tracking=value end,readSetting=function(_,key) return values[key] end,
+        readBookSetting=function(_,file,key) return values[key] end,
         updateSetting=function(_,key,value) values[key]=value end,menuConfirm=function() return true end,
         setMenuConfirm=function() end,compatibilityMode=function() return false end,
         pages=function() return 200 end,syncByRemotePages=function() return values.pages==true end,
@@ -41,6 +42,27 @@ describe("Redesigned StoryGraph menus", function()
         showChangeEditionDialog=function(_,done) edition_search=true;done() end},
       page_mapper={getMappedPage=function(_,page,total,remote) return page/total*remote end}}
     linked_search,edition_search=nil,nil
+  end)
+
+  it("shows the last confirmed percentage and local date/time in the book card",function()
+    local summary=menu:getSubMenuItems(true)[1]
+    assert.matches("Last progress sync: Not yet recorded",summary.sync_text_func(),1,true)
+    values.last_progress_sync={book_id="id",percent=42.5,at=1791711000}
+    assert.matches("Last synced progress: 42.5%",summary.sync_text_func(),1,true)
+    assert.matches("Synced on: "..os.date("%d/%m/%Y %H:%M",1791711000),summary.sync_text_func(),1,true)
+    assert.is_nil(summary.text_func():find("Last synced progress",1,true))
+    values.last_progress_sync.book_id="old-edition"
+    assert.matches("Last progress sync: Not yet recorded",summary.sync_text_func(),1,true)
+    linked=false
+    assert.is_nil(summary.sync_text_func())
+  end)
+
+  it("opens the standalone menu through the callback used by new ZenOS shortcuts",function()
+    menu:mainMenu().callback({closeMenu=function() end})
+    assert.are.equal(1,#shown)
+    assert.are.equal("StoryGraph",shown[1].title)
+    assert.is_not_nil(shown[1].items_func)
+    assert.is_function(shown[1].onLeftButtonTap)
   end)
 
   it("separates configuration from reading without dropping moved actions",function()

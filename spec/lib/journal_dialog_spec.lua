@@ -3,10 +3,23 @@ local Widget={}
 function Widget:new(o) return setmetatable(o or {},{__index=self}) end
 function Widget:setText(text) self.text=text end
 function Widget:setPosition(position) self.position=position end
+function Widget:getSize() return {h=40} end
 local InputDialog=setmetatable({},{__index=Widget})
 function InputDialog:extend(class) return setmetatable(class,{__index=self}) end
 function InputDialog:init()
   self.width=400
+  -- Model InputDialog's sizing contract: explicit text_height bypasses the
+  -- keyboard/chrome/added-widget budget, unless fullscreen is requested.
+  if self.orig_text_height==nil then self.orig_text_height=self.text_height or false end
+  local controls_height=0
+  for _,widget in ipairs(self._added_widgets or {}) do
+    controls_height=controls_height+widget:getSize().h
+  end
+  local available_height=(self.screen_height or 600)-(self.keyboard_height or 300)-100-controls_height
+  if not self.text_height or self.fullscreen then
+    self.text_height=self.use_available_height and available_height or math.min(20,available_height)
+  end
+  self.frame_height=100+controls_height+self.text_height
   self._input_widget={getText=function() return self.input or "" end}
   self.vgroup={{name="title"},{name="spacer"},{self._input_widget},{name="spacer"},{name="buttons"}}
   self.layout={{self._input_widget},{name="buttons"}}
@@ -29,6 +42,7 @@ function InputDialog:reinit()
   self.input=self._input_widget:getText()
   for _=1,#self._added_widgets do table.remove(self.vgroup,#self.vgroup-2) end
   self:free()
+  self.text_height=self.orig_text_height or nil
   self:init(true)
 end
 
@@ -50,7 +64,7 @@ describe("Progress and notes dialog",function()
   local dialog,saved
   before_each(function()
     shown,saved={},nil
-    dialog=setmetatable({input="A note",book_id="book",page=42,remote_page=200,remote_percent=37,
+    dialog=setmetatable({input="A note",input_box_height=250,book_id="book",page=42,remote_page=200,remote_percent=37,
       date={year=2026,month=10,day=11},progress_type="percentage",
       page_mapper={ui={getCurrentPage=function() return 42 end,
         document={getPageCount=function() return 100 end}},
@@ -58,6 +72,25 @@ describe("Progress and notes dialog",function()
         getUnmappedPage=function(_,page,total,pages) return page/pages*total end},
       save_dialog_callback=function(data) saved=data end},{__index=Journal})
     dialog:init()
+  end)
+
+  it("keeps the note and submit buttons above the keyboard on initial opening",function()
+    assert.is_true(dialog.frame_height<=600-300)
+    assert.is_true(dialog.text_height>0)
+  end)
+
+  it("recomputes space when keyboard height changes without losing the draft",function()
+    dialog.note_input.getText=function() return "Unsaved draft" end
+    dialog.page=55
+    dialog.keyboard_height=360
+    dialog:onKeyboardHeightChanged()
+    assert.is_true(dialog.frame_height<=600-360)
+    assert.are.equal("Unsaved draft",dialog.note_input:getText())
+    assert.are.equal(55,dialog.page)
+    dialog.keyboard_height=0
+    dialog:onKeyboardHeightChanged()
+    assert.is_true(dialog.frame_height<=600)
+    assert.are.equal("Unsaved draft",dialog.note_input:getText())
   end)
 
   it("places both controls before the note and keeps focus in visual order",function()

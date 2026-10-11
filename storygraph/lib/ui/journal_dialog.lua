@@ -240,7 +240,11 @@ function JournalDialog:init(reinit)
   -- with both controls included in the available height (also on small screens).
   for _ = 1, #self._added_widgets do table.remove(self.vgroup, #self.vgroup - 2) end
   self:free()
-  self.text_height = self.input_box_height or Device.screen:scaleBySize(150)
+  -- Enable adaptive sizing only after both controls have been registered:
+  -- addWidget would otherwise re-init midway through constructing them.
+  -- InputDialog reserves the keyboard, controls and submit-button heights.
+  self.use_available_height = true
+  self.text_height = nil
   InputDialog.init(self, true)
   self.note_input = self._input_widget
   self._note_container = self.vgroup[3]

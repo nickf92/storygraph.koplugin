@@ -11,6 +11,7 @@ local Event = require("ui/event")
 local Font = require("ui/font")
 local UIManager = require("ui/uimanager")
 local ActionMenu = require("storygraph/lib/ui/action_menu")
+local HomeDialog = require("storygraph/lib/ui/home_dialog")
 
 local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
 local InfoMessage = require("ui/widget/infomessage")
@@ -61,12 +62,12 @@ local function heading(text)
 end
 
 function HardcoverMenu:showMenu()
-  local menu = ActionMenu:new {
+  local menu = HomeDialog:new {
     title = _("StoryGraph"),
-    item_table = { items_func = function()
+    document = self.ui.document,
+    items_func = function()
       return self:getSubMenuItems(self.ui.document ~= nil)
-    end },
-    title_bar_left_icon = "appbar.settings",
+    end,
     onLeftButtonTap = function(menu_instance)
       self:showSettingsMenu(menu_instance)
     end,
@@ -102,12 +103,22 @@ function HardcoverMenu:getSubMenuItems(book_view)
           return _("No linked book. Open settings to link this document.")
         end
         return (self.settings:getLinkedTitle() or self.settings:getLinkedBookId())
-          .. "\n" .. (self.settings:getLinkedEditionFormat() or _("Physical book"))
-          .. " · " .. (status_names[self.state.book_status.status_id] or _("No reading status"))
-          .. "\n" .. (self.settings:syncEnabled() and _("Automatic tracking on") or _("Automatic tracking off"))
+          .. "\n" .. T(_("Edition: %1"), self.settings:getLinkedEditionFormat() or _("Physical book"))
+          .. "\n" .. T(_("Reading status: %1"), status_names[self.state.book_status.status_id] or _("No reading status"))
+          .. "\n" .. T(_("Automatic tracking: %1"), self.settings:syncEnabled() and _("On") or _("Off"))
+      end,
+      sync_text_func = function()
+        if not self.settings:bookLinked() then return end
+        local last_sync = self.settings:readBookSetting(self.ui.document.file, "last_progress_sync")
+        if last_sync and tostring(last_sync.book_id) == tostring(self.settings:getLinkedBookId()) then
+          return T(_("Last synced progress: %1%"), string.format("%.1f", last_sync.percent))
+            .. "\n" .. T(_("Synced on: %1"), os.date("%d/%m/%Y %H:%M", last_sync.at))
+        end
+        return _("Last progress sync: Not yet recorded")
       end,
       enabled = false,
       is_header = true,
+      is_summary = true,
     }
     items[#items + 1] = heading(_("Reading"))
     items[#items + 1] = self:getProgressMenuItem()
@@ -279,6 +290,7 @@ end
 function HardcoverMenu:getProgressMenuItem()
   return {
     primary = true,
+    help_text = _("Update progress, or add a note (optional)."),
     enabled_func = function()
       return self:isActive() and self.settings:bookLinked() and self:canUpdateProgress()
     end,

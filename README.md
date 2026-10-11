@@ -33,6 +33,8 @@ The StoryGraph menu is located in the **Bookmark** top menu when a document is a
 
 The main screen shows the linked book, reading status, automatic tracking state, reading actions, and pending synchronization. Tap the **settings icon** in its title bar to open configuration separately. Book linking, edition changes, the automatic tracking toggle, account credentials, and plugin information are available there. Settings and the pending queue remain accessible without an open document.
 
+If you use ZenOS, recreate StoryGraph launcher shortcuts created before 0.3.0. Those shortcuts target the former submenu; the redesigned interface opens through a menu callback.
+
 ### Updating Progress & Notes
 The main screen provides a unified **"Progress and notes: [XX]%"** menu item. This opens a powerful dialog where you can:
 - **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and **StoryGraph** synced percentages.

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.2 (2026-10-11)
+
+* Show the last confirmed progress percentage and local date/time in a Last synchronization section below the book card, with a gray section heading, black details and no surrounding frame, keeping the cover/title layout compact. Persist confirmation metadata per linked edition for immediate and queued deliveries, including progress sent with notes; failed or skipped updates leave it unchanged.
+* Prepare dynamic menu labels before native KOReader row-height calculation, restoring the book summary, progress/notes and pending synchronization rows. Keep checkbox labels current after refresh.
+* Let KOReader render submenu arrows once instead of adding a second arrow in the plugin.
+* Restore the standard touch-menu font and minimum row height, including settings section headings. Measure wrapped labels accurately and paginate taller rows.
+* Replace the main action list with a dedicated native home screen: separate book title and metadata, emphasize progress/notes with a dark button, and use compact group labels and secondary touch buttons. Keep existing submenu actions and settings, with scrolling on small screens.
+* Refine home-screen spacing and typography: replace secondary button outlines with thin separators, align labels and trailing arrows, and give book details and group labels less visual weight without reducing touch targets.
+* Show a thin-bordered book card with an embedded local cover, a no-cover fallback and higher-contrast edition/status/tracking details. Explain that the primary action updates progress and can also include an optional manual note.
+* Balance home-screen margins around reserved scrollbar space, align labeled edition/status/tracking details on separate lines, and give settings section headings the standard touch-row minimum height.
+* Size the progress/notes editor using KOReader's available-height calculation, reserving space for the keyboard, page/date controls and submit buttons instead of forcing a fixed note height. Preserve drafts across keyboard resizing.
+* Document recreating pre-0.3.0 ZenOS launcher shortcuts. Pass 296 automated tests and Lua syntax checks; verify the installable archive locally.
+
 ## 0.3.1 (2026-10-11)
 
 * Use consistent reading status, progress tracking, synchronization and review labels across menus and messages.

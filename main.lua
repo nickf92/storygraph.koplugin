@@ -559,6 +559,34 @@ function HardcoverApp:_onQueuedOperationSuccess(operation, result)
   local callback = self._syncQueueCallbacks[operation.id]
   self._syncQueueCallbacks[operation.id] = nil
 
+  -- Record confirmed deliveries even when another document is now open.
+  -- A skipped automatic update did not send new progress to StoryGraph.
+  if (operation.kind == "progress" or operation.kind == "note")
+      and not (type(result) == "table" and result._storygraph_skipped) then
+    local linked_id = self.settings:readBookSetting(operation.document, "book_id")
+      or self.settings:readBookSetting(operation.document, "edition_id")
+    if tostring(linked_id) == tostring(operation.book_id) then
+      local payload = operation.payload
+      local value = tonumber(operation.kind == "progress" and payload.value or payload.progress)
+      local unit = operation.kind == "progress" and payload.update_type or payload.progress_type
+      if operation.kind == "progress" and type(result) == "table" then
+        local observed = unit == "pages" and result.last_reached_pages
+          or unit ~= "pages" and (result.last_reached_percent or result.percent_finished)
+        value = tonumber(observed) or value
+      end
+      local percent = value
+      if unit == "pages" then
+        local pages = tonumber(self.settings:readBookSetting(operation.document, "pages"))
+        percent = pages and pages > 0 and value and value / pages * 100 or nil
+      end
+      if percent and percent >= 0 and percent <= 100 then
+        self.settings:updateBookSetting(operation.document, {
+          last_progress_sync = { book_id = operation.book_id, percent = percent, at = os.time() },
+        })
+      end
+    end
+  end
+
   if self.ui.document and self.ui.document.file == operation.document
       and operation.session_id == self._documentSessionId then
     if type(result) == "table" and result._storygraph_refresh then
