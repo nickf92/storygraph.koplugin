@@ -31,16 +31,19 @@ Bugs may still occur. Contributions and bug reports are welcome.
 
 The StoryGraph menu is located in the **Bookmark** top menu when a document is active.
 
+The main screen shows the linked book, reading status, automatic tracking state, reading actions, and pending synchronization. Tap the **settings icon** in its title bar to open configuration separately. Book linking, edition changes, the automatic tracking toggle, account credentials, and plugin information are available there. Settings and the pending queue remain accessible without an open document.
+
 ### Updating Progress & Notes
-The plugin provides a unified **"Update progress: [XX]%"** menu item. This opens a powerful dialog where you can:
+The main screen provides a unified **"Progress and notes: [XX]%"** menu item. This opens a powerful dialog where you can:
 - **Set Progress**: Tap the progress button to open a native picker showing both your **KOReader** and **StoryGraph** synced percentages.
 - **Add a Note**: Write your thoughts directly in the note field.
 - **Location Context**: By default, notes sent via the highlight menu automatically include your current **Chapter, Page, and Percentage**. You can enable this for regular notes in the settings.
 
 ### Linking a Book
 Before updates can be sent, the plugin needs to link your document to a StoryGraph book.
-- Use **"Link book"** to search by metadata or ISBN.
-- Use **"Change edition"** to switch to a different edition.
+- Open the settings icon and use **"Link book"** in **Linking** to search by metadata or ISBN.
+- Use **"Change edition"** in the same settings screen to switch to a different edition.
+- Hold the linked-book entry to remove the link, as in previous versions.
 - Audio editions are filtered out of the search results.
 - If a book is not currently tracked, the plugin will set its status to Currently Reading
 - If another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.

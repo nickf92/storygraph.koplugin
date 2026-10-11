@@ -10,6 +10,7 @@ local T = require("ffi/util").template
 local Event = require("ui/event")
 local Font = require("ui/font")
 local UIManager = require("ui/uimanager")
+local ActionMenu = require("storygraph/lib/ui/action_menu")
 
 local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
 local InfoMessage = require("ui/widget/infomessage")
@@ -20,7 +21,6 @@ local Api = require("storygraph/lib/hardcover_api")
 local Github = require("storygraph/lib/github")
 local User = require("storygraph/lib/user")
 local QueueMenu = require("storygraph/lib/ui/sync_queue_menu")
-local _t = require("storygraph/lib/table_util")
 
 local HARDCOVER = require("storygraph/lib/constants/hardcover")
 local ICON = require("storygraph/lib/constants/icons")
@@ -50,28 +50,120 @@ function HardcoverMenu:mainMenu()
     text_func = function()
       return self.settings:bookLinked() and _("StoryGraph: " .. ICON.LINK) or _("StoryGraph")
     end,
-    sub_item_table_func = function()
-      local has_book = self.ui.document and true or false
-      return self:getSubMenuItems(has_book)
+    callback = function()
+      self:showMenu()
     end,
   }
 end
 
+local function heading(text)
+  return { text = text, enabled = false, is_header = true }
+end
+
+function HardcoverMenu:showMenu()
+  local menu = ActionMenu:new {
+    title = _("StoryGraph"),
+    item_table = { items_func = function()
+      return self:getSubMenuItems(self.ui.document ~= nil)
+    end },
+    title_bar_left_icon = "appbar.settings",
+    onLeftButtonTap = function(menu_instance)
+      self:showSettingsMenu(menu_instance)
+    end,
+  }
+  UIManager:show(menu)
+end
+
+function HardcoverMenu:showSettingsMenu(parent_menu)
+  UIManager:show(ActionMenu:new {
+    title = _("StoryGraph settings"),
+    close_callback = function()
+      if parent_menu and not parent_menu._closed then parent_menu:updateItems() end
+    end,
+    item_table = { items_func = function()
+      return self:getSettingsSubMenuItems()
+    end },
+  })
+end
+
 function HardcoverMenu:getSubMenuItems(book_view)
-  local menu_items = {
-    {
+  local items = {}
+  if book_view then
+    local status_names = {
+      [HARDCOVER.STATUS.TO_READ] = _("Want to read"),
+      [HARDCOVER.STATUS.READING] = _("Currently reading"),
+      [HARDCOVER.STATUS.FINISHED] = _("Read"),
+      [HARDCOVER.STATUS.PAUSED] = _("Paused"),
+      [HARDCOVER.STATUS.DNF] = _("Did not finish"),
+    }
+    items[#items + 1] = {
       text_func = function()
-        return _("Pending synchronization") .. " (" .. self.app.sync_queue:count() .. ")"
+        if not self.settings:bookLinked() then
+          return _("No linked book. Open settings to link this document.")
+        end
+        return (self.settings:getLinkedTitle() or self.settings:getLinkedBookId())
+          .. "\n" .. (self.settings:getLinkedEditionFormat() or _("Physical book"))
+          .. " · " .. (status_names[self.state.book_status.status_id] or _("No reading status"))
+          .. "\n" .. (self.settings:syncEnabled() and _("Automatic tracking on") or _("Automatic tracking off"))
+      end,
+      enabled = false,
+      is_header = true,
+    }
+    items[#items + 1] = heading(_("Reading"))
+    items[#items + 1] = self:getProgressMenuItem()
+    items[#items + 1] = {
+      text = _("Status and review"),
+      enabled_func = function()
+        return self:isActive() and self.settings:bookLinked()
       end,
       sub_item_table_func = function()
-        return QueueMenu:items(self.app.sync_queue, {
-          retry = function(id, delivered) return self.app:retryPendingOperation(id, delivered) end,
-          confirm = function(options) self.dialog_manager:confirm(options) end,
-          show = function(text) UIManager:show(InfoMessage:new { text = text }) end,
-        })
+        self.cache:cacheUserBook(self.ui.document.file)
+        return self:getStatusSubMenuItems()
+      end,
+      refresh_items_func = function() return self:getStatusSubMenuItems() end,
+    }
+    items[#items + 1] = {
+      text = _("Jump to StoryGraph position"),
+      enabled_func = function()
+        return self:isActive() and self.settings:bookLinked()
+      end,
+      callback = function()
+        UIManager:broadcastEvent(Event:new("StoryGraphPullPosition"))
+      end,
+    }
+  end
+  items[#items + 1] = heading(_("Synchronization"))
+  items[#items + 1] = {
+    text_func = function()
+      return T(_("Pending synchronization (%1)"), self.app.sync_queue:count())
+    end,
+    sub_item_table_func = function()
+      return QueueMenu:items(self.app.sync_queue, {
+        retry = function(id, delivered) return self.app:retryPendingOperation(id, delivered) end,
+        confirm = function(options) self.dialog_manager:confirm(options) end,
+        show = function(text) UIManager:show(InfoMessage:new { text = text }) end,
+      })
+    end,
+  }
+  return items
+end
+
+function HardcoverMenu:getBookSettingsItems()
+  return {
+    {
+      text = _("Automatically track progress"),
+      checked_func = function()
+        return self.settings:syncEnabled()
+      end,
+      enabled_func = function()
+        return self:isActive() and self.settings:bookLinked()
+      end,
+      callback = function()
+        local sync = not self.settings:syncEnabled()
+        self.settings:setSync(sync)
       end,
     },
-    book_view and {
+    {
       text_func = function()
         if self.settings:bookLinked() then
           -- need to show link information somehow. Maybe store title
@@ -112,7 +204,7 @@ function HardcoverMenu:getSubMenuItems(book_view)
         end)
       end,
     },
-    book_view and {
+    {
       text_func = function()
         local edition_format = self.settings:getLinkedEditionFormat()
         local title = "Change edition"
@@ -135,65 +227,24 @@ function HardcoverMenu:getSubMenuItems(book_view)
       end,
       keep_menu_open = true,
       separator = true
-    },
-    book_view and {
-      text = _("Automatically track progress"),
-      checked_func = function()
-        return self.settings:syncEnabled()
-      end,
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        local sync = not self.settings:syncEnabled()
-        self.settings:setSync(sync)
-      end,
-    },
-    book_view and {
-      text = _("Update status"),
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      sub_item_table_func = function()
-        local document = self.ui.document
-        if document then
-          self.cache:cacheUserBook(document.file)
-        end
+    }
+  }
+end
 
-        return self:getStatusSubMenuItems()
-      end,
-      separator = true
-    },
-    book_view and {
-      text = _("Jump to StoryGraph position"),
-      enabled_func = function()
-        return self:isActive() and self.settings:bookLinked()
-      end,
-      callback = function()
-        UIManager:broadcastEvent(Event:new("StoryGraphPullPosition"))
-      end,
-      separator = true
-    },
+function HardcoverMenu:getAboutMenuItem()
+  return {
+    text = _("About"),
+    callback = function()
+      local info = Github:fetchVersionInfo()
+      local version = table.concat(VERSION, ".")
+      local new_release_str = ""
+      if info and info.plugin_version and Github:isNewer(info.plugin_version) then
+        new_release_str = " (latest v" .. info.plugin_version .. ")"
+      end
+      local settings_file = DataStorage:getSettingsDir() .. "/" .. "storygraphsync_settings.lua"
 
-    {
-      text = _("Settings"),
-      sub_item_table_func = function()
-        return self:getSettingsSubMenuItems()
-      end,
-    },
-    {
-      text = _("About"),
-      callback = function()
-        local info = Github:fetchVersionInfo()
-        local version = table.concat(VERSION, ".")
-        local new_release_str = ""
-        if info and info.plugin_version and Github:isNewer(info.plugin_version) then
-          new_release_str = " (latest v" .. info.plugin_version .. ")"
-        end
-        local settings_file = DataStorage:getSettingsDir() .. "/" .. "storygraphsync_settings.lua"
-
-        UIManager:show(InfoMessage:new {
-          text = [[
+      UIManager:show(InfoMessage:new {
+        text = [[
 StoryGraph plugin
 v]] .. version .. new_release_str .. [[
 
@@ -211,16 +262,57 @@ github.com/Billiam/hardcoverapp.koplugin
 
 Settings:
 ]] .. settings_file,
-          face = Font:getFace("cfont", 18),
-          show_icon = false,
-        })
-      end,
-      keep_menu_open = true
-    }
+        face = Font:getFace("cfont", 18),
+        show_icon = false,
+      })
+    end,
+    keep_menu_open = true
   }
-  return _t.filter(menu_items, function(v)
-    return v
-  end)
+end
+
+function HardcoverMenu:canUpdateProgress()
+  local status = self.state.book_status.status_id
+  return not status or (status ~= HARDCOVER.STATUS.FINISHED
+    and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ)
+end
+
+function HardcoverMenu:getProgressMenuItem()
+  return {
+    primary = true,
+    enabled_func = function()
+      return self:isActive() and self.settings:bookLinked() and self:canUpdateProgress()
+    end,
+    text_func = function()
+      local current_page = self.ui:getCurrentPage()
+      local total_pages = self.ui.document:getPageCount()
+      local remote_pages = self.settings:pages()
+      if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 then
+        local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
+        return T(_("Progress and notes: Page %1 / %2"), mapped_page, remote_pages or "?")
+      else
+        local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
+        return T(_("Progress and notes: %1%"), current_percent)
+      end
+    end,
+    callback = function()
+      -- This action used to live in the status submenu, which refreshed first.
+      self.cache:cacheUserBook(self.ui.document.file)
+      if not self:isActive() or not self.settings:bookLinked() or not self:canUpdateProgress() then return end
+      local current_page = self.ui:getCurrentPage()
+      local remote_percent = self.state.book_status.last_reached_percent or 0
+
+      self.dialog_manager:journalEntryForm(
+        "",
+        self.ui.document,
+        current_page,
+        self.settings:pages(),
+        nil, -- let journalEntryForm handle it based on settings
+        remote_percent,
+        "note"
+      )
+    end,
+    keep_menu_open = true
+  }
 end
 
 function HardcoverMenu:getStatusSubMenuItems()
@@ -386,40 +478,6 @@ function HardcoverMenu:getStatusSubMenuItems()
 
   local status = self.state.book_status.status_id
 
-  -- Update progress: only when NOT read, DNF, removed, or want to read
-  if not status or (status ~= HARDCOVER.STATUS.FINISHED
-      and status ~= HARDCOVER.STATUS.DNF and status ~= HARDCOVER.STATUS.TO_READ) then
-    table.insert(items, {
-      text_func = function()
-        local current_page = self.ui:getCurrentPage()
-        local total_pages = self.ui.document:getPageCount()
-        local remote_pages = self.settings:pages()
-        if self.settings:syncByRemotePages() and tonumber(remote_pages) and tonumber(remote_pages) > 0 then
-          local mapped_page = self.page_mapper:getMappedPage(current_page, total_pages, remote_pages)
-          return T(_("Update progress: Page %1 / %2"), mapped_page, remote_pages or "?")
-        else
-          local current_percent = math.floor((current_page / total_pages) * 100 + 0.5)
-          return T(_("Update progress: %1%"), current_percent)
-        end
-      end,
-      callback = function()
-        local current_page = self.ui:getCurrentPage()
-        local remote_percent = self.state.book_status.last_reached_percent or 0
-
-        self.dialog_manager:journalEntryForm(
-          "",
-          self.ui.document,
-          current_page,
-          self.settings:pages(),
-          nil, -- let journalEntryForm handle it based on settings
-          remote_percent,
-          "note"
-        )
-      end,
-      keep_menu_open = true
-    })
-  end
-
   -- Review: only when read or DNF or can_review
   if status and (status == HARDCOVER.STATUS.FINISHED or status == HARDCOVER.STATUS.DNF or self.state.book_status.can_review) then
     table.insert(items, {
@@ -499,6 +557,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
   end
 
   return {
+    heading(_("Rating")),
     {
       text_func = function()
         local stars = review.stars or 0
@@ -526,6 +585,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
       end,
       keep_menu_open = true,
     },
+    heading(_("Reading experience")),
     {
       text = "Moods",
       sub_item_table_func = function(menu_instance)
@@ -600,6 +660,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
         return make_options_items("flaws", {"", "yes", "no", "it's complicated", "n/a"}, menu_instance)
       end
     },
+    heading(_("Review text")),
     {
       text = "Themes",
       callback = function(menu_instance)
@@ -674,6 +735,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
       end,
       keep_menu_open = true,
     },
+    heading(_("Save or discard")),
     {
       text = "Save Review",
       callback = function(menu_instance)
@@ -685,7 +747,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
           end
           UIManager:show(InfoMessage:new { text = "Review saved!" })
           self.state.review = nil -- Clear temp state
-          menu_instance:onClose()
+          menu_instance:closeMenu()
         else
           UIManager:show(InfoMessage:new { text = "Failed to save review" })
         end
@@ -695,7 +757,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
       text = "Cancel Review",
       callback = function(menu_instance)
         self.state.review = nil
-        menu_instance:onClose()
+        menu_instance:closeMenu()
       end
     }
   }
@@ -997,7 +1059,7 @@ function HardcoverMenu:getAuthSubMenuItems()
 end
 
 function HardcoverMenu:getSettingsSubMenuItems()
-  return {
+  local items = {
     {
       text = "Automatically link by ISBN",
       checked_func = function()
@@ -1107,6 +1169,27 @@ Quotes always include this info.]],
       end,
     },
   }
+  local grouped = {}
+  if self.ui.document then
+    local book_items = self:getBookSettingsItems()
+    grouped[#grouped + 1] = heading(_("This book"))
+    grouped[#grouped + 1] = book_items[1]
+    grouped[#grouped + 1] = heading(_("Linking"))
+    grouped[#grouped + 1] = book_items[2]
+    grouped[#grouped + 1] = book_items[3]
+  end
+  local sections = {
+    { _("Automatic linking"), 1, 2, 3 },
+    { _("Synchronization"), 4, 5 },
+    { _("Preferences"), 6, 8 },
+    { _("Plugin"), 7, 9, 10 },
+  }
+  for _, section in ipairs(sections) do
+    grouped[#grouped + 1] = heading(section[1])
+    for i = 2, #section do grouped[#grouped + 1] = items[section[i]] end
+  end
+  grouped[#grouped + 1] = self:getAboutMenuItem()
+  return grouped
 end
 
 return HardcoverMenu

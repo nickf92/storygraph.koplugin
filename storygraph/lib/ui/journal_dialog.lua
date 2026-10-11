@@ -12,7 +12,6 @@ local ToggleSwitch = require("ui/widget/toggleswitch")
 local DateTimeWidget = require("ui/widget/datetimewidget")
 local UpdateDoubleSpinWidget = require("storygraph/lib/ui/update_double_spin_widget")
 local TextWidget = require("ui/widget/textwidget")
-local TextBoxWidget = require("ui/widget/textboxwidget")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 local T = require("ffi/util").template
@@ -21,7 +20,8 @@ local logger = require("logger")
 local JournalDialog = InputDialog:extend {
   allow_newline = true,
   results = {},
-  title = "StoryGraph: Add note",
+  title = _("StoryGraph: Progress and notes"),
+  input_hint = _("Note (optional)"),
   padding = 10,
 
   page = nil, -- current mapped value (percent or page)
@@ -46,16 +46,9 @@ function JournalDialog:onConfigChoose(key, value)
   UIManager:setDirty(self.page_button, "partial")
 end
 
-function JournalDialog:init()
+function JournalDialog:init(reinit)
   self:setModified()
   self.date = self.date or os.date("*t")
-
-  local text_widget = TextBoxWidget:new {
-    text = "",
-    face = Font:getFace("smallinfofont"),
-    for_measurement_only = true,
-  }
-  self.text_height = text_widget:getTextHeight()
 
   local journal_self = self
   local confirm_bypass = false
@@ -99,8 +92,16 @@ function JournalDialog:init()
 
     journal_self.save_dialog_callback(save_data)
   end -- Satisfy InputDialog
-  InputDialog.init(self)
+  InputDialog.init(self, reinit)
   self.note_input = self._input_widget
+  self._note_container = self.vgroup[3]
+  self._note_focus_row = self.layout[1]
+  if reinit and self._added_widgets then
+    self:moveNoteBelowControls()
+    return
+  end
+  local gap = Size.span.horizontal_default
+  local control_width = (self:getAddedWidgetAvailableWidth() - gap) / 2
 
   -- Progress Button
   self.page_button = Button:new {
@@ -111,7 +112,7 @@ function JournalDialog:init()
         return _("Page: " .. self.page .. " / " .. (self.remote_page or "?"))
       end
     end,
-    width = (self.width - 20) / 2,
+    width = control_width,
     text_font_size = 18,
     bordersize = Size.border.thin,
     callback = function()
@@ -176,10 +177,10 @@ function JournalDialog:init()
 
   -- Progress Type Toggle
   local progress_type_toggle = ToggleSwitch:new {
-    width = self.width - 40,
-    margin = 10,
+    width = self:getAddedWidgetAvailableWidth(),
+    margin = Size.margin.default,
     alternate = false,
-    toggle = { _("Percentage"), _("Page") },
+    toggle = { _("Percentage"), _("Edition page") },
     values = { "percentage", "pages" },
     config = self,
     callback = function(position)
@@ -196,9 +197,9 @@ function JournalDialog:init()
   -- Date Button (triggers DateTimeWidget)
   self.date_button = Button:new {
     text_func = function()
-      return string.format("%04d-%02d-%02d", self.date.year, self.date.month, self.date.day)
+      return T(_("Date: %1"), string.format("%04d-%02d-%02d", self.date.year, self.date.month, self.date.day))
     end,
-    width = (self.width - 20) / 2,
+    width = control_width,
     text_font_size = 18,
     bordersize = Size.border.thin,
     callback = function()
@@ -224,17 +225,82 @@ function JournalDialog:init()
   }
 
   local control_row = FrameContainer:new {
-    padding_top = 10,
-    padding_bottom = 8,
+    padding_top = Size.padding.default,
+    padding_bottom = Size.padding.default,
     bordersize = 0,
     HorizontalGroup:new {
       self.page_button,
-      HorizontalSpan:new { width = 10 },
+      HorizontalSpan:new { width = gap },
       self.date_button
     }
   }
 
   self:addWidget(control_row)
+  -- Retain controls while releasing the first layout, then measure the input
+  -- with both controls included in the available height (also on small screens).
+  for _ = 1, #self._added_widgets do table.remove(self.vgroup, #self.vgroup - 2) end
+  self:free()
+  self.text_height = self.input_box_height or Device.screen:scaleBySize(150)
+  InputDialog.init(self, true)
+  self.note_input = self._input_widget
+  self._note_container = self.vgroup[3]
+  self._note_focus_row = self.layout[1]
+  self:moveNoteBelowControls()
+end
+
+-- InputDialog adds controls below the input. Move the input as a single unit,
+-- including its focus row, then restore its native order before re-init/free.
+function JournalDialog:moveNoteBelowControls()
+  table.remove(self.vgroup, 3)
+  table.insert(self.vgroup, 3 + #self._added_widgets, self._note_container)
+  table.remove(self.layout, 1)
+  table.insert(self.layout, #self.layout, self._note_focus_row)
+  if self.selected then
+    if self.selected.y == 1 then
+      self.selected.y = #self.layout - 1
+    elseif self.selected.y < #self.layout then
+      self.selected.y = self.selected.y - 1
+    end
+  end
+  self._note_below_controls = true
+end
+
+function JournalDialog:restoreInputOrder()
+  if not self._note_below_controls then return end
+  for i, widget in ipairs(self.vgroup) do
+    if widget == self._note_container then
+      table.remove(self.vgroup, i)
+      table.insert(self.vgroup, 3, widget)
+      break
+    end
+  end
+  for i, row in ipairs(self.layout) do
+    if row == self._note_focus_row then
+      if self.selected then
+        if self.selected.y == i then
+          self.selected.y = 1
+        elseif self.selected.y < i then
+          self.selected.y = self.selected.y + 1
+        end
+      end
+      table.remove(self.layout, i)
+      table.insert(self.layout, 1, row)
+      break
+    end
+  end
+  self._note_below_controls = false
+end
+
+function JournalDialog:reinit()
+  self:restoreInputOrder()
+  return InputDialog.reinit(self)
+end
+
+JournalDialog.onKeyboardHeightChanged = JournalDialog.reinit
+
+function JournalDialog:free()
+  self:restoreInputOrder()
+  return InputDialog.free(self)
 end
 
 function JournalDialog:setModified()

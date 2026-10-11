@@ -3,7 +3,8 @@ local ListMenu = require("storygraph/vendor/listmenu")
 local CoverMenu = require("storygraph/vendor/covermenu")
 
 local SearchMenu = Menu:extend {
-  font_size = 22
+  font_size = 22,
+  files_per_page = 5, -- leave room for edition metadata below the title
 }
 
 SearchMenu.updateItems = CoverMenu.updateItems

@@ -16,7 +16,7 @@ function QueueMenu:items(queue, actions)
         and _("Waiting to verify delivery") or _("Check delivery")) or paused and _("Relink edition")
       or operation.blocked_reason and _("Needs attention")
       or operation.next_attempt_at and _("Waiting to retry") or _("Pending")
-    local label = filename .. " — " .. _(operation.kind) .. ": " .. state
+    local label = filename .. "\n" .. _(operation.kind) .. " · " .. state
     local choices = {}
     if paused then
       choices[#choices + 1] = {

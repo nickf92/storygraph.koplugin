@@ -38,3 +38,19 @@ These steps complement the automated tests; they have not been executed by the h
 4. Suspend and resume KOReader with pending operations. Verify that no retry occurs during suspension and that the remaining delay is respected after resume.
 5. Change the linked edition with pending progress/notes. Verify that the note's original position and the current reading position are mapped separately.
 6. Verify the plugin against KOReader's bundled htmlparser version: the headless fixtures pin htmlparser 0.3.9 and cannot establish live website compatibility or device UI behavior.
+
+## UI redesign regression checks
+
+`scripts/test.sh` also checks menu action availability, all moved settings, nested navigation, live checkbox state, long-press unlinking, review dismissal, edition metadata in both renderers, and progress/note payloads and confirmation. UI tests stub KOReader widgets: they establish callback and data behavior, not native rendering.
+
+On KOReader, additionally verify:
+
+1. Open StoryGraph with and without a document. The main screen contains reading actions and the pending queue; the title-bar settings icon opens configuration in both cases. Close settings and verify that the book summary and tracking state refresh.
+2. From settings, link/relink a book, change edition, and hold the linked-book row to unlink it. Check all original automatic linking, tracking thresholds, Wi-Fi, confirmations, location, compatibility, account, and update options. Confirm that disabled/version-blocked actions and the explicit override behave as before.
+3. Check progress availability for no status, reading, paused, to-read, read and DNF. Open Status and review to refresh remote state; review availability must still depend on read/DNF or `can_review`. Verify all status choices, removal, Owned and Favorite.
+4. Open Progress and notes directly and from a highlight. Verify type/progress/date controls above the note, mapping in both directions, backward-progress confirmation, note-only/progress-only payloads, quote/location context, and keyboard show/hide and height changes without losing text, date or progress.
+5. Browse long edition metadata with and without covers and in compatibility mode. Check active edition, publisher/date/ISBN, authors, pagination and book selection.
+6. Open pending synchronization and verify normal, authentication-blocked, paused-edition, retry, scheduled verification and manual-recovery states. Check note previews and both delivery-recovery confirmations.
+7. Edit every review field, select several moods, save, cancel, and navigate back through nested menus. Check touch, keyboard/D-pad focus, long labels, portrait/landscape and the smallest supported screen.
+
+Native UI/device checks and live StoryGraph mutations require a separate manual run; they are not performed by the headless test suite.

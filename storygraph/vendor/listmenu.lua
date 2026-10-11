@@ -509,7 +509,7 @@ function ListMenuItem:update()
         -- If multiple authors (crengine separates them with \n), we
         -- can display them on multiple lines, but limit to 2, and
         -- append "et al." to the 2nd if there are more
-        if authors and authors:find("\n") then
+        if authors and authors:find("\n") and not bookinfo.edition_details then
           authors = util.splitToArray(authors, "\n")
           for i=1, #authors do
             authors[i] = BD.auto(authors[i])

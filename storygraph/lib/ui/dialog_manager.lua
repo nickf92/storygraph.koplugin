@@ -3,6 +3,7 @@ local _ = require("gettext")
 local json = require("json")
 
 local UIManager = require("ui/uimanager")
+local Device = require("device")
 
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
@@ -173,7 +174,8 @@ function DialogManager:journalEntryForm(text, document, page, remote_pages, init
   local dialog
   dialog = JournalDialog:new {
     input = text,
-    input_box_height = 250,
+    input_box_height = Device.screen:scaleBySize(250),
+    description = (settings.title or "") .. "\n" .. _("Leave the note empty to update progress only."),
     book_id = settings.book_id,
     page = initial_percent,
     remote_page = remote_pages,

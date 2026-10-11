@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 (2026-10-11)
+
+### Interface
+
+* Separate the current book's reading state and synchronization queue from settings, accessible through the title bar's settings button. Move linking, edition selection, tracking preferences and plugin information into settings while preserving their existing actions.
+* Give progress and notes a dedicated entry, group reading status and review controls, and place progress and date controls above the note input.
+* Improve edition search metadata and selected-edition visibility, and display synchronization entries on multiple lines.
+
+### Compatibility and validation
+
+* Preserve API version 1, queue schema v2 and existing synchronization, reading status, review, linking and tracking behavior.
+* Pass 267 automated tests and Lua syntax checks. Native KOReader layout and live mutation smoke tests remain separate manual validation documented in TESTING.md.
+* Include the interface analysis and before/after web mockups in docs.
+
 ## 0.2.11 (2026-09-27)
 
 ### Features

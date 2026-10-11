@@ -11,6 +11,7 @@ local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 local logger = require("logger")
 local _t = require("storygraph/lib/table_util")
+local T = require("ffi/util").template
 
 local Screen = Device.screen
 
@@ -97,29 +98,33 @@ function HardcoverSearchDialog:createListItem(book, active_item)
     result.authors = table.concat(authors, ", ")
   end
 
-  local details = {}
-  if book.book_id then
-    if book.isbn and book.isbn ~= "" and book.isbn ~= "None" then table.insert(details, "ISBN: " .. book.isbn) end
-    local format_str = book.edition_format or book.filetype or ""
-    if format_str ~= "" then table.insert(details, format_str) end
-    if book.edition_language and book.edition_language ~= "" then table.insert(details, book.edition_language) end
-    if book.pub_date and book.pub_date ~= "" and book.pub_date ~= "Not specified" then table.insert(details, book.pub_date) end
-    if book.publisher and book.publisher ~= "" then table.insert(details, book.publisher) end
-  end
   local details_lines = {}
-  if #details > 0 then
-    local line1, line2 = {}, {}
-    for i, v in ipairs(details) do
-      if i <= 3 then table.insert(line1, v) else table.insert(line2, v) end
-    end
-    if #line1 > 0 then table.insert(details_lines, table.concat(line1, " • ")) end
-    if #line2 > 0 then table.insert(details_lines, table.concat(line2, " • ")) end
+  if result.authors then table.insert(details_lines, result.authors) end
+  local format_str = book.edition_format or book.filetype or ""
+  local edition_info = {}
+  if format_str ~= "" then table.insert(edition_info, format_str) end
+  if book.edition_language and book.edition_language ~= "" then
+    table.insert(edition_info, book.edition_language)
+  end
+  if book.pages then table.insert(edition_info, T(_("%1 pages"), book.pages)) end
+  if #edition_info > 0 then table.insert(details_lines, table.concat(edition_info, " · ")) end
+  local publication = {}
+  if book.publisher and book.publisher ~= "" then table.insert(publication, book.publisher) end
+  if book.pub_date and book.pub_date ~= "" and book.pub_date ~= "Not specified" then
+    table.insert(publication, book.pub_date)
+  end
+  if #publication > 0 then table.insert(details_lines, table.concat(publication, " · ")) end
+  if book.isbn and book.isbn ~= "" and book.isbn ~= "None" then
+    table.insert(details_lines, T(_("ISBN: %1"), book.isbn))
   end
   local details_str = table.concat(details_lines, "\n")
+  if active then
+    result.mandatory = _("Linked edition") .. (info ~= "" and " · " .. info or "")
+    result.bold = true
+  end
 
   if self.compatibility_mode then
     result.text = result.title
-    result.dim = result.highlight
     if book.book_id then
       if details_str ~= "" then
         result.text = result.text .. "\n" .. details_str
@@ -132,6 +137,7 @@ function HardcoverSearchDialog:createListItem(book, active_item)
   else
     if book.book_id and details_str ~= "" then
       result.authors = details_str
+      result.edition_details = true
     end
   end
 
@@ -181,6 +187,7 @@ function HardcoverSearchDialog:init()
   self.menu = menu_class:new {
     single_line = false,
     multilines_show_more_text = true,
+    items_max_lines = self.compatibility_mode and 5 or nil,
     title = self.title or "Select book",
     fullscreen = true,
     item_table = self:parseItems(self.items, self.active_item),
