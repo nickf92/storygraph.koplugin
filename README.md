@@ -45,8 +45,8 @@ Before updates can be sent, the plugin needs to link your document to a StoryGra
 - Use **"Change edition"** in the same settings screen to switch to a different edition.
 - Hold the linked-book entry to remove the link, as in previous versions.
 - Audio editions are filtered out of the search results.
-- If a book is not currently tracked, the plugin will set its status to Currently Reading
-- If another edition of the book is set as 'Currently Reading' or 'Want to Read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
+- If a book is not currently tracked, the plugin will set its status to Currently reading
+- If another edition of the book is set as 'Currently reading' or 'Want to read' then the plugin will automatically link to that edition, but not change the status. You can use "Change edition" to link to a different edition if needed.
 
 ### Automatically Track Progress
 When enabled, the plugin will periodically sync your progress to StoryGraph:
@@ -59,7 +59,7 @@ When enabled, the plugin will periodically sync your progress to StoryGraph:
 
 - **Include location info in regular notes**: Automatically append Chapter, Page, and % info to your regular notes.
 - **Automatically link by ISBN/Title**: Attempt to find matching books on StoryGraph automatically when opening a new document.
-- **Enable wifi on demand**: Allow the plugin to turn Wi-Fi on temporarily for automatic work. Leave this disabled to synchronize only when a connection is already available. Temporary Wi-Fi is cleaned up even if a sync callback fails; connections that were already on are left on.
+- **Enable Wi-Fi on demand**: Allow the plugin to turn Wi-Fi on temporarily for automatic work. Leave this disabled to synchronize only when a connection is already available. Temporary Wi-Fi is cleaned up even if a sync callback fails; connections that were already on are left on.
 - **Confirm changes**: Prompt for confirmation before changing a book's status (e.g., Want to Read -> Read).
 
 Pending offline operations are stored in `storygraphsync_queue.lua` in the KOReader settings directory. The file may temporarily contain note text; each pending entry is removed after StoryGraph confirms its update.

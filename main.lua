@@ -452,7 +452,7 @@ function HardcoverApp:onStoryGraphUpdateProgress()
         })
       elseif status == "queued" then
         UIManager:show(Notification:new {
-          text = _("Progress saved for synchronization")
+          text = _("StoryGraph progress saved for synchronization")
         })
       else
         logger.warn("Unsuccessful updating page progress", self.ui.document.file)
@@ -607,7 +607,7 @@ function HardcoverApp:_onQueuedOperationFailure(operation, reason)
       })
     elseif changed_error and reason == "not_reading" then
       UIManager:show(Notification:new {
-        text = _("StoryGraph progress is pending. Mark this book as Currently Reading to synchronize it."),
+        text = _('StoryGraph progress is pending. Mark this book as "Currently reading" to synchronize it.'),
       })
     elseif changed_error and reason == "progress_unconfirmed" then
       UIManager:show(Notification:new {

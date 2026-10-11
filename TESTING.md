@@ -4,6 +4,8 @@
 
 Run `scripts/setup-tests.sh` once, then `scripts/test.sh`. Setup installs the pinned versions in `scripts/test-dependencies.txt`; the tests themselves require no network or credentials. CI and release packaging use the same commands. Set `STORYGRAPH_TEST_RUNTIME` to reuse a separately installed runtime.
 
+Build the installable archive with `python3 scripts/package-release.py /tmp/storygraph.koplugin.zip`. The archive contains the `storygraph.koplugin/` installation directory with plugin code, version metadata, example configuration and licenses. Tests, development scripts and project documentation remain in the repository and are excluded from the archive.
+
 Coverage includes:
 
 - Real htmlparser 0.3.9 parsing of synthetic edition/progress HTML.

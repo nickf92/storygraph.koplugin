@@ -26,9 +26,7 @@ jobs:
         run: scripts/test.sh
 
       - name: Zip release
-        run: |
-          cd ..
-          zip -r storygraph.koplugin.zip storygraph.koplugin -x '*/*.git*' '*/spec/*' '*/lua_modules/*' '*/.luarocks/*' '*/lua' '*/luarocks' '*/.tool-versions' '*/*.rockspec'
+        run: python3 scripts/package-release.py ../storygraph.koplugin.zip
 
       - name: Release
         uses: softprops/action-gh-release@v2

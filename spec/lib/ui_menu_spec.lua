@@ -54,8 +54,8 @@ describe("Redesigned StoryGraph menus", function()
     local settings=menu:getSettingsSubMenuItems()
     for _, label in ipairs({"Linked book:","Change edition","Automatically track progress","About",
       "Automatically link by ISBN","Automatically link by StoryGraph identifier","Automatically link by title and author",
-      "Progress tracking settings","Enable wifi on demand","Confirm changes to book read status",
-      "Compatibility mode","Include location info in regular notes","Account (Cookies & Tokens)","Plugin Updates"}) do
+      "Progress tracking settings","Enable Wi-Fi on demand","Confirm changes to reading status",
+      "Compatibility mode","Include location info in regular notes","Account (cookies and tokens)","Plugin updates"}) do
       assert.is_not_nil(find(settings,label))
     end
   end)
@@ -67,7 +67,7 @@ describe("Redesigned StoryGraph menus", function()
     assert.is_nil(find(main,"Progress and notes"))
     local settings=menu:getSettingsSubMenuItems()
     assert.is_nil(find(settings,"Change edition"))
-    assert.is_not_nil(find(settings,"Account (Cookies & Tokens)"))
+    assert.is_not_nil(find(settings,"Account (cookies and tokens)"))
     menu:showMenu(); shown[1].onLeftButtonTap(shown[1])
     assert.are.equal("StoryGraph settings",shown[2].title)
   end)
@@ -125,8 +125,8 @@ describe("Redesigned StoryGraph menus", function()
     menu.state.book_status={status_id=STATUS.READING,can_review=true}
     assert.is_not_nil(find(menu:getStatusSubMenuItems(),"Review"))
     local items=menu:getReviewSubMenuItems()
-    for _,label in ipairs({"Rating:","Moods","Pace:","Driven by:","Character Development:","Loveable characters:",
-      "Diverse cast:","Character flaws:","Themes","Thoughts","Save Review","Cancel Review"}) do
+    for _,label in ipairs({"Rating:","Moods","Pace:","Driven by:","Character development:","Loveable characters:",
+      "Diverse cast:","Character flaws:","Themes","Thoughts","Save review","Cancel review"}) do
       assert.is_not_nil(find(items,label))
     end
   end)

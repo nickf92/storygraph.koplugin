@@ -50,7 +50,7 @@ function QueueMenu:items(queue, actions)
     end
     items[#items + 1] = { text = label, sub_item_table = choices }
   end
-  if #items == 0 then items[1] = { text = _("No pending updates"), enabled = false } end
+  if #items == 0 then items[1] = { text = _("No pending synchronization"), enabled = false } end
   return items
 end
 

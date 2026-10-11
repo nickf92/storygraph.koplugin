@@ -318,13 +318,13 @@ end
 function HardcoverMenu:getStatusSubMenuItems()
   local items = {
     {
-      text = _(ICON.BOOKMARK .. " Want To Read"),
+      text = ICON.BOOKMARK .. " " .. _("Want to read"),
       checked_func = function()
         return self.state.book_status.status_id == HARDCOVER.STATUS.TO_READ
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Mark book as Want To Read?",
+          text = _('Mark book as "Want to read"?'),
           ok_callback = function()
             self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.TO_READ)
             menu_instance.item_table = self:getStatusSubMenuItems()
@@ -338,13 +338,13 @@ function HardcoverMenu:getStatusSubMenuItems()
       radio = true
     },
     {
-      text = _(ICON.OPEN_BOOK .. " Currently Reading"),
+      text = ICON.OPEN_BOOK .. " " .. _("Currently reading"),
       checked_func = function()
         return self.state.book_status.status_id == HARDCOVER.STATUS.READING
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Mark book as Currently Reading?",
+          text = _('Mark book as "Currently reading"?'),
           ok_callback = function()
             self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.READING)
             menu_instance.item_table = self:getStatusSubMenuItems()
@@ -364,7 +364,7 @@ function HardcoverMenu:getStatusSubMenuItems()
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Mark book as Read?",
+          text = _('Mark book as "Read"?'),
           ok_callback = function()
             self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.FINISHED)
             menu_instance.item_table = self:getStatusSubMenuItems()
@@ -384,7 +384,7 @@ function HardcoverMenu:getStatusSubMenuItems()
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Mark book as Paused?",
+          text = _('Mark book as "Paused"?'),
           ok_callback = function()
             self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.PAUSED)
             menu_instance.item_table = self:getStatusSubMenuItems()
@@ -398,13 +398,13 @@ function HardcoverMenu:getStatusSubMenuItems()
       radio = true
     },
     {
-      text = _(ICON.STOP_CIRCLE .. " Did Not Finish"),
+      text = ICON.STOP_CIRCLE .. " " .. _("Did not finish"),
       checked_func = function()
         return self.state.book_status.status_id == HARDCOVER.STATUS.DNF
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Mark book as Did Not Finish?",
+          text = _('Mark book as "Did not finish"?'),
           ok_callback = function()
             self.cache:updateBookStatus(self.ui.document.file, HARDCOVER.STATUS.DNF)
             menu_instance.item_table = self:getStatusSubMenuItems()
@@ -418,13 +418,13 @@ function HardcoverMenu:getStatusSubMenuItems()
       radio = true,
     },
     {
-      text = _(ICON.TRASH .. " Remove"),
+      text = ICON.TRASH .. " " .. _("Remove reading status"),
       enabled_func = function()
         return self.enabled and self.state.book_status.status_id ~= nil
       end,
       callback = function(menu_instance)
         self.dialog_manager:maybeConfirm({
-          text = "Remove current book status?",
+          text = _("Remove the current reading status?"),
           ok_callback = function()
             local result = Api:removeRead(self.state.book_status.id)
             if result then
@@ -575,7 +575,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
           value_hold_step = 1,
           precision = "%.2f",
           ok_text = _("Set"),
-          title_text = _("Set Rating"),
+          title_text = _("Set rating"),
           callback = function(spin)
             review.stars = spin.value
             menu_instance:updateItems()
@@ -637,7 +637,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
       end
     },
     {
-      text_func = function() return "Character Development: " .. get_display_val(review.development) end,
+      text_func = function() return "Character development: " .. get_display_val(review.development) end,
       sub_item_table_func = function(menu_instance)
         return make_options_items("development", {"", "yes", "no", "it's complicated", "n/a"}, menu_instance)
       end
@@ -737,7 +737,7 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
     },
     heading(_("Save or discard")),
     {
-      text = "Save Review",
+      text = _("Save review"),
       callback = function(menu_instance)
         local success = Api:saveReview(book_id, review, self.state.book_status.review_url)
         if success then
@@ -745,16 +745,16 @@ function HardcoverMenu:getReviewSubMenuItems(menu_instance)
           if document then
             self.cache:cacheUserBook(document.file)
           end
-          UIManager:show(InfoMessage:new { text = "Review saved!" })
+          UIManager:show(InfoMessage:new { text = _("Review saved") })
           self.state.review = nil -- Clear temp state
           menu_instance:closeMenu()
         else
-          UIManager:show(InfoMessage:new { text = "Failed to save review" })
+          UIManager:show(InfoMessage:new { text = _("Failed to save review") })
         end
       end
     },
     {
-      text = "Cancel Review",
+      text = _("Cancel review"),
       callback = function(menu_instance)
         self.state.review = nil
         menu_instance:closeMenu()
@@ -766,7 +766,7 @@ end
 function HardcoverMenu:getTrackingSubMenuItems()
   return {
     {
-      text = _("Auto sync by edition pages"),
+      text = _("Use edition pages for progress"),
       checked_func = function()
         return self.settings:syncByRemotePages()
       end,
@@ -791,7 +791,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
       separator = true
     },
     {
-      text = "Update periodically",
+      text = _("Track progress periodically"),
       radio = true,
       checked_func = function()
         return self.settings:trackByTime()
@@ -815,7 +815,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
           value_step = 1,
           value_hold_step = 6,
           ok_text = _("Save"),
-          title_text = _("Set track frequency"),
+          title_text = _("Set tracking interval"),
           callback = function(spin)
             self.settings:updateSetting(SETTING.TRACK_FREQUENCY, spin.value)
             menu_instance:updateItems()
@@ -827,7 +827,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
       keep_menu_open = true
     },
     {
-      text = "Update by progress",
+      text = _("Track progress by percentage"),
       radio = true,
       checked_func = function()
         return self.settings:trackByProgress()
@@ -851,7 +851,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
           value_step = 1,
           value_hold_step = 10,
           ok_text = _("Save"),
-          title_text = _("Set track progress"),
+          title_text = _("Set tracking percentage interval"),
           callback = function(spin)
             self.settings:changeTrackPercentageInterval(spin.value)
             menu_instance:updateItems()
@@ -863,7 +863,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
       keep_menu_open = true
     },
     {
-      text = "Update by edition pages",
+      text = _("Track progress by edition pages"),
       radio = true,
       checked_func = function()
         return self.settings:trackByPages()
@@ -887,7 +887,7 @@ function HardcoverMenu:getTrackingSubMenuItems()
           value_step = 1,
           value_hold_step = 10,
           ok_text = _("Save"),
-          title_text = _("Set track pages"),
+          title_text = _("Set tracking page interval"),
           callback = function(spin)
             self.settings:updateSetting(SETTING.TRACK_PAGE_STEP, spin.value)
             menu_instance:updateItems()
@@ -915,13 +915,13 @@ function HardcoverMenu:getUpdateSubMenuItems()
         
         if new_setting then
           UIManager:show(Notification:new {
-            text = _("StoryGraph: Version block ignored. Sync enabled."),
+            text = _("StoryGraph: Version block ignored. Synchronization enabled."),
             timeout = 5
           })
           self.app:startReadCache(true)
         else
           UIManager:show(Notification:new {
-            text = _("StoryGraph: Version block active. Sync disabled."),
+            text = _("StoryGraph: Version block active. Synchronization disabled."),
             timeout = 5
           })
           self.app:cancelPendingUpdates()
@@ -988,12 +988,12 @@ end
 function HardcoverMenu:getAuthSubMenuItems()
   return {
     {
-      text = _("StoryGraph Session Cookie"),
+      text = _("StoryGraph session cookie"),
       callback = function()
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
-          title = _("StoryGraph Session Cookie"),
+          title = _("StoryGraph session cookie"),
           fields = {
             {
               text = self.settings:readSetting(SETTING.SESSION_COOKIE) or "",
@@ -1022,12 +1022,12 @@ function HardcoverMenu:getAuthSubMenuItems()
       end,
     },
     {
-      text = _("StoryGraph Remember Token"),
+      text = _("StoryGraph remember token"),
       callback = function()
         local MultiInputDialog = require("ui/widget/multiinputdialog")
         local dialog
         dialog = MultiInputDialog:new {
-          title = _("StoryGraph Remember Token"),
+          title = _("StoryGraph remember token"),
           fields = {
             {
               text = self.settings:readSetting(SETTING.REMEMBER_TOKEN) or "",
@@ -1099,7 +1099,7 @@ function HardcoverMenu:getSettingsSubMenuItems()
       separator = true
     },
     {
-      text = "Enable wifi on demand",
+      text = _("Enable Wi-Fi on demand"),
       checked_func = function()
         return self.settings:readSetting(SETTING.ENABLE_WIFI) == true
       end,
@@ -1112,7 +1112,7 @@ function HardcoverMenu:getSettingsSubMenuItems()
       end
     },
     {
-      text = "Confirm changes to book read status",
+      text = _("Confirm changes to reading status"),
       checked_func = function()
         return self.settings:menuConfirm()
       end,
@@ -1157,13 +1157,13 @@ Quotes always include this info.]],
       separator = true
     },
     {
-      text = "Account (Cookies & Tokens)",
+      text = _("Account (cookies and tokens)"),
       sub_item_table_func = function()
         return self:getAuthSubMenuItems()
       end,
     },
     {
-      text = "Plugin Updates",
+      text = _("Plugin updates"),
       sub_item_table_func = function()
         return self:getUpdateSubMenuItems()
       end,

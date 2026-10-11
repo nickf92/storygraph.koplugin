@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 (2026-10-11)
+
+* Use consistent reading status, progress tracking, synchronization and review labels across menus and messages.
+* Package only plugin code, version metadata, example configuration and licenses. Keep tests, development scripts and project documentation in the repository.
+
+* Remove the archived web mockups and replace the preliminary interface analysis with a concise description of the implemented design.
+* Pass 267 automated tests and Lua syntax checks; verify archive contents locally.
+
 ## 0.3.0 (2026-10-11)
 
 ### Interface
